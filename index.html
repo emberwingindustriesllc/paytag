@@ -82,29 +82,63 @@
 
     <!-- Payment section -->
 
-    <section id="paymentSection" class="card hidden">
+   <section id="paymentSection" class="card hidden">
 
-      <h2>Send a payment</h2>
+  <h2>Send a payment</h2>
 
-      <p>
-        Send SOL directly to this wallet.
-      </p>
+  <p>
+    Send SOL directly to this PayTag.
+  </p>
 
-      <div class="amount-buttons">
+  <div id="recipientName"></div>
 
-        <button class="amount-button" data-amount="0.01">
-          0.01 SOL
-        </button>
+  <button id="paymentConnectButton" class="primary-button">
+    Connect Wallet to Pay
+  </button>
 
-        <button class="amount-button" data-amount="0.05">
-          0.05 SOL
-        </button>
+  <div id="paymentForm" class="hidden">
 
-        <button class="amount-button" data-amount="0.1">
-          0.10 SOL
-        </button>
+    <div class="amount-buttons">
 
-      </div>
+      <button class="amount-button" data-amount="0.01">
+        0.01 SOL
+      </button>
+
+      <button class="amount-button" data-amount="0.05">
+        0.05 SOL
+      </button>
+
+      <button class="amount-button" data-amount="0.1">
+        0.10 SOL
+      </button>
+
+    </div>
+
+    <div class="custom-amount">
+
+      <label for="customAmount">
+        Custom amount
+      </label>
+
+      <input
+        id="customAmount"
+        type="number"
+        min="0.001"
+        step="0.001"
+        placeholder="0.00"
+      >
+
+    </div>
+
+    <button id="sendButton" class="primary-button">
+      Send SOL
+    </button>
+
+    <p id="paymentStatus" class="status"></p>
+
+  </div>
+
+</section>
 
 
       <div class="custom-amount">
