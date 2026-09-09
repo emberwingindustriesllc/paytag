@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>PayTag — Pay anyone directly</title>
+
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Solana Web3.js -->
+  <script src="https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js"></script>
+</head>
+
+<body>
+
+  <main class="container">
+
+    <header>
+      <div class="logo">PAY<span>TAG</span></div>
+      <p class="tagline">Pay anyone. Anywhere.</p>
+    </header>
+
+    <section class="card">
+
+      <div id="walletDisconnected">
+
+        <h1>Get your PayTag</h1>
+
+        <p>
+          Connect your Solana wallet and create a simple payment page
+          that you can share anywhere.
+        </p>
+
+        <button id="connectButton" class="primary-button">
+          Connect Solana Wallet
+        </button>
+
+        <p id="status" class="status"></p>
+
+      </div>
+
+
+      <div id="walletConnected" class="hidden">
+
+        <div class="success">
+          ✓ Wallet connected
+        </div>
+
+        <h1>Your PayTag</h1>
+
+        <div class="username-box">
+          <span>@</span>
+          <input
+            id="username"
+            type="text"
+            placeholder="username"
+            maxlength="20"
+          >
+        </div>
+
+        <button id="saveButton" class="primary-button">
+          Create PayTag
+        </button>
+
+        <div id="paytagResult" class="hidden result">
+
+          <p>Your PayTag</p>
+
+          <div id="paytagUrl" class="paytag-url"></div>
+
+          <button id="copyButton" class="secondary-button">
+            Copy Payment Link
+          </button>
+
+        </div>
+
+      </div>
+
+    </section>
+
+
+    <!-- Payment section -->
+
+    <section id="paymentSection" class="card hidden">
+
+      <h2>Send a payment</h2>
+
+      <p>
+        Send SOL directly to this wallet.
+      </p>
+
+      <div class="amount-buttons">
+
+        <button class="amount-button" data-amount="0.01">
+          0.01 SOL
+        </button>
+
+        <button class="amount-button" data-amount="0.05">
+          0.05 SOL
+        </button>
+
+        <button class="amount-button" data-amount="0.1">
+          0.10 SOL
+        </button>
+
+      </div>
+
+
+      <div class="custom-amount">
+
+        <label for="customAmount">
+          Custom amount
+        </label>
+
+        <input
+          id="customAmount"
+          type="number"
+          min="0.001"
+          step="0.001"
+          placeholder="0.00"
+        >
+
+      </div>
+
+
+      <button id="sendButton" class="primary-button">
+        Send SOL
+      </button>
+
+      <p id="paymentStatus" class="status"></p>
+
+    </section>
+
+
+    <footer>
+      <p>
+        Payments powered by Solana
+      </p>
+    </footer>
+
+  </main>
+
+
+  <script src="app.js"></script>
+
+</body>
+</html>
