@@ -68,6 +68,7 @@ const paymentStatus =
 // --------------------------------------------------
 
 let walletPublicKey = null;
+let recipientWallet = null;
 
 
 // Detect Phantom / Solana wallet
@@ -439,17 +440,15 @@ function loadPayTag() {
   const wallet =
     params.get("wallet");
 
+  if (username && wallet) {
 
-  if (
-    username &&
-    wallet
-  ) {
+    recipientWallet = wallet;
 
-    walletConnected.classList.add(
+    walletDisconnected.classList.add(
       "hidden"
     );
 
-    walletDisconnected.classList.add(
+    walletConnected.classList.add(
       "hidden"
     );
 
@@ -457,28 +456,72 @@ function loadPayTag() {
       "hidden"
     );
 
-
-    const title =
-      document.createElement(
-        "h1"
-      );
-
-    title.textContent =
-      `@${username}`;
-
-
-    const card =
-      document.querySelector(
-        ".card"
-      );
-
-    card.prepend(
-      title
-    );
+    document.getElementById(
+      "recipientName"
+    ).textContent =
+      `Pay @${username}`;
 
   }
 
 }
+// --------------------------------------------------
+// PAYMENT WALLET CONNECTION
+// --------------------------------------------------
+
+const paymentConnectButton =
+  document.getElementById(
+    "paymentConnectButton"
+  );
+
+const paymentForm =
+  document.getElementById(
+    "paymentForm"
+  );
 
 
+paymentConnectButton.addEventListener(
+  "click",
+  async () => {
+
+    const wallet =
+      getWallet();
+
+    if (!wallet) {
+
+      paymentStatus.textContent =
+        "Please install a Solana wallet such as Phantom.";
+
+      return;
+
+    }
+
+    try {
+
+      const response =
+        await wallet.connect();
+
+      walletPublicKey =
+        response.publicKey;
+
+      paymentConnectButton.textContent =
+        "Wallet connected";
+
+      paymentConnectButton.disabled =
+        true;
+
+      paymentForm.classList.remove(
+        "hidden"
+      );
+
+    } catch (error) {
+
+      console.error(error);
+
+      paymentStatus.textContent =
+        "Wallet connection was cancelled.";
+
+    }
+
+  }
+);
 loadPayTag();
