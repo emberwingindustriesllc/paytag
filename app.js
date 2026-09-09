@@ -11,10 +11,10 @@ const {
 // SETTINGS
 // --------------------------------------------------
 
-const NETWORK = "mainnet-beta";
+const NETWORK = "devnet";
 
 const connection = new Connection(
-  "https://api.mainnet-beta.solana.com",
+  "https://api.devnet.solana.com",
   "confirmed"
 );
 
