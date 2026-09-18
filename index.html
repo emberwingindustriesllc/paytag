@@ -19,6 +19,7 @@
     <header>
       <div class="logo">PAY<span>TAG</span></div>
       <p class="tagline">Pay anyone. Anywhere.</p>
+      <span class="network-badge">Devnet</span>
     </header>
 
     <section class="card">
@@ -82,87 +83,61 @@
 
     <!-- Payment section -->
 
-   <section id="paymentSection" class="card hidden">
+    <section id="paymentSection" class="card hidden">
 
-  <h2>Send a payment</h2>
+      <h2>Send a payment</h2>
 
-  <p>
-    Send SOL directly to this PayTag.
-  </p>
+      <p>
+        Send SOL directly to this PayTag.
+      </p>
 
-  <div id="recipientName"></div>
+      <div id="recipientName"></div>
 
-  <button id="paymentConnectButton" class="primary-button">
-    Connect Wallet to Pay
-  </button>
-
-  <div id="paymentForm" class="hidden">
-
-    <div class="amount-buttons">
-
-      <button class="amount-button" data-amount="0.01">
-        0.01 SOL
+      <button id="paymentConnectButton" class="primary-button">
+        Connect Wallet to Pay
       </button>
 
-      <button class="amount-button" data-amount="0.05">
-        0.05 SOL
-      </button>
+      <div id="paymentForm" class="hidden">
 
-      <button class="amount-button" data-amount="0.1">
-        0.10 SOL
-      </button>
+        <div class="amount-buttons">
 
-    </div>
+          <button class="amount-button" data-amount="0.01">
+            0.01 SOL
+          </button>
 
-    <div class="custom-amount">
+          <button class="amount-button" data-amount="0.05">
+            0.05 SOL
+          </button>
 
-      <label for="customAmount">
-        Custom amount
-      </label>
+          <button class="amount-button" data-amount="0.1">
+            0.10 SOL
+          </button>
 
-      <input
-        id="customAmount"
-        type="number"
-        min="0.001"
-        step="0.001"
-        placeholder="0.00"
-      >
+        </div>
 
-    </div>
+        <div class="custom-amount">
 
-    <button id="sendButton" class="primary-button">
-      Send SOL
-    </button>
+          <label for="customAmount">
+            Custom amount
+          </label>
 
-    <p id="paymentStatus" class="status"></p>
+          <input
+            id="customAmount"
+            type="number"
+            min="0.001"
+            step="0.001"
+            placeholder="0.00"
+          >
 
-  </div>
+        </div>
 
-</section>
+        <button id="sendButton" class="primary-button">
+          Send SOL
+        </button>
 
-
-      <div class="custom-amount">
-
-        <label for="customAmount">
-          Custom amount
-        </label>
-
-        <input
-          id="customAmount"
-          type="number"
-          min="0.001"
-          step="0.001"
-          placeholder="0.00"
-        >
+        <p id="paymentStatus" class="status"></p>
 
       </div>
-
-
-      <button id="sendButton" class="primary-button">
-        Send SOL
-      </button>
-
-      <p id="paymentStatus" class="status"></p>
 
     </section>
 

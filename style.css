@@ -42,6 +42,18 @@ header {
   margin-top: 6px;
 }
 
+.network-badge {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 999px;
+}
+
 .card {
   background: white;
   border-radius: 18px;
@@ -85,6 +97,11 @@ button {
 
 .primary-button:hover {
   opacity: 0.9;
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .secondary-button {

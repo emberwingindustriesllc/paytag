@@ -1,3 +1,20 @@
+// --------------------------------------------------
+// SETTINGS
+// --------------------------------------------------
+
+const NETWORK = "devnet"; // change to "mainnet-beta" when going live
+
+if (typeof solanaWeb3 === "undefined") {
+  document.addEventListener("DOMContentLoaded", () => {
+    const status = document.getElementById("status");
+    if (status) {
+      status.textContent =
+        "Could not load the Solana library. Check your connection and reload the page.";
+    }
+  });
+  throw new Error("solanaWeb3 failed to load from the CDN.");
+}
+
 const {
   Connection,
   PublicKey,
@@ -6,15 +23,8 @@ const {
   LAMPORTS_PER_SOL
 } = solanaWeb3;
 
-
-// --------------------------------------------------
-// SETTINGS
-// --------------------------------------------------
-
-const NETWORK = "devnet";
-
 const connection = new Connection(
-  "https://api.devnet.solana.com",
+  solanaWeb3.clusterApiUrl(NETWORK),
   "confirmed"
 );
 
@@ -62,6 +72,12 @@ const customAmount =
 const paymentStatus =
   document.getElementById("paymentStatus");
 
+const paymentConnectButton =
+  document.getElementById("paymentConnectButton");
+
+const paymentForm =
+  document.getElementById("paymentForm");
+
 
 // --------------------------------------------------
 // WALLET
@@ -90,7 +106,7 @@ function getWallet() {
 
 
 // --------------------------------------------------
-// CONNECT WALLET
+// CONNECT WALLET (owner flow: create your PayTag)
 // --------------------------------------------------
 
 connectButton.addEventListener(
@@ -128,9 +144,9 @@ connectButton.addEventListener(
         "hidden"
       );
 
-      paymentSection.classList.remove(
-        "hidden"
-      );
+      // NOTE: the payment section is only for people visiting someone
+      // else's PayTag link (see loadPayTag() below) — it should stay
+      // hidden here, on the owner's own "create a tag" page.
 
     } catch (error) {
 
@@ -395,8 +411,9 @@ sendButton.addEventListener(
         `
         Payment successful!<br>
         <a
-          href="https://solscan.io/tx/${signature}"
+          href="https://solscan.io/tx/${signature}?cluster=${NETWORK}"
           target="_blank"
+          rel="noopener noreferrer"
         >
           View transaction
         </a>
@@ -424,7 +441,7 @@ sendButton.addEventListener(
 
 
 // --------------------------------------------------
-// LOAD EXISTING PAYTAG
+// LOAD EXISTING PAYTAG (visitor flow: pay someone else)
 // --------------------------------------------------
 
 function loadPayTag() {
@@ -464,20 +481,11 @@ function loadPayTag() {
   }
 
 }
+
+
 // --------------------------------------------------
 // PAYMENT WALLET CONNECTION
 // --------------------------------------------------
-
-const paymentConnectButton =
-  document.getElementById(
-    "paymentConnectButton"
-  );
-
-const paymentForm =
-  document.getElementById(
-    "paymentForm"
-  );
-
 
 paymentConnectButton.addEventListener(
   "click",
@@ -524,4 +532,5 @@ paymentConnectButton.addEventListener(
 
   }
 );
+
 loadPayTag();
