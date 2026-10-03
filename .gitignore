@@ -1,0 +1,24 @@
+# dependencies
+node_modules/
+
+# local scratch
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+
+# secrets — never commit wallet keys or RPC credentials
+.env
+.env.*
+secrets.json
+*.key
+*.pem
+
+# build/test output
+coverage/
+*.tgz

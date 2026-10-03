@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No npm install: PayTag has zero runtime dependencies and no build
+      # step. Installing nothing is both faster and a supply-chain win.
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Verify required files exist
+        run: |
+          for f in index.html style.css app.js paytag-core.js favicon.svg \
+                   manifest.webmanifest 404.html README.md LICENSE; do
+            test -f "$f" || { echo "missing: $f"; exit 1; }
+          done
+          echo "all required files present"
+
+      - name: Sanity-check that the share-link round trip works
+        run: |
+          node -e "
+            const core = require('./paytag-core.js');
+            const addr = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+            const url = core.buildShareUrl('https://example.org/', 'Alice', addr);
+            const u = new URL(url);
+            const back = core.parsePayTagFromLocation(u.pathname, u.search);
+            if (!back.ok || back.handle !== 'alice' || back.address !== addr) {
+              console.error('round trip failed:', url, back);
+              process.exit(1);
+            }
+            console.log('round trip ok:', url);
+          "

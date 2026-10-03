@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PayTag</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <div class="logo">PAY<span>TAG</span></div>
+      <p class="tagline">Pay anyone. Anywhere.</p>
+    </header>
+
+    <section class="card">
+      <h1>One moment…</h1>
+      <p id="msg">Taking you to your PayTag…</p>
+      <p class="muted">
+        If nothing happens,
+        <a id="home" href="./">open PayTag</a>.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    // GitHub Pages serves this file for unknown paths, from the site root of
+    // the deployment. RELATIVE refs therefore resolve correctly on a project
+    // site (/paytag/404.html), on a custom domain, and on a plain static
+    // host — no hardcoded base path.
+    //
+    // If someone opens the prettier /handle?to=ADDR form, forward it to the
+    // canonical query-string URL that the app itself generates.
+    (function () {
+      var HOME = './';
+      var p = window.location.pathname || '';
+      var s = window.location.search || '';
+      var msg = document.getElementById('msg');
+
+      var isThisPage = /(^|\/)404\.html$/.test(p);
+      var m = p.match(/\/([^/?#]+)\/?$/);
+
+      // A PayTag-style path with a destination address: convert and redirect.
+      if (!isThisPage && m && m[1] && s.indexOf('to=') !== -1) {
+        window.location.replace(
+          HOME + '?tag=' + encodeURIComponent(m[1]) + '&' + s.slice(1)
+        );
+        return;
+      }
+
+      // Anything else unknown: go home.
+      if (!isThisPage && p) {
+        if (msg) {
+          msg.textContent = 'That page does not exist. Opening PayTag…';
+        }
+        window.location.replace(HOME);
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "paytag",
+  "version": "1.0.0",
+  "description": "Pay anyone, anywhere. A zero-backend Solana payment link you can share as a URL.",
+  "private": true,
+  "license": "MIT",
+  "author": "EmberWing Industries LLC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emberwingindustriesllc/paytag.git"
+  },
+  "homepage": "https://emberwingindustriesllc.github.io/paytag/",
+  "bugs": {
+    "url": "https://github.com/emberwingindustriesllc/paytag/issues"
+  },
+  "keywords": [
+    "solana",
+    "crypto",
+    "payments",
+    "paytag"
+  ],
+  "scripts": {
+    "start": "node scripts/serve.js",
+    "dev": "node scripts/serve.js",
+    "test": "node --test \"test/*.test.js\"",
+    "lint": "node scripts/lint.js",
+    "check": "npm run lint && npm test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

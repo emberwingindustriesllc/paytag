@@ -1,536 +1,566 @@
-// --------------------------------------------------
-// SETTINGS
-// --------------------------------------------------
+/*
+ * PayTag — Pay anyone, anywhere.
+ *
+ * Zero-backend crypto payments on Solana. A PayTag is a shareable link that
+ * carries the destination address, so nothing needs to be hosted or registered.
+ *
+ * Responsibilities split as:
+ *   paytag-core.js  pure logic (handles, amounts, link parsing) — unit tested
+ *   app.js          DOM + wallet wiring (this file)
+ *
+ * Design notes worth keeping:
+ *  - No innerHTML is used with external data anywhere. Link parameters are
+ *    attacker-controlled, so anything derived from them goes in via
+ *    textContent / createElement only.
+ *  - The cluster is shown to the user and is requested from the wallet where
+ *    supported. Getting devnet/mainnet wrong is the single most expensive
+ *    mistake in this app, so it is surfaced loudly rather than assumed.
+ *  - web3.js 1.98.x still expects `transaction.recentBlockhash = ...` /
+ *    `transaction.feePayer = ...`. The newer setRecentBlockhash()/setFeePayer()
+ *    methods DO NOT EXIST in that version — do not "modernise" this.
+ */
+(function () {
+  'use strict';
 
-const NETWORK = "devnet"; // change to "mainnet-beta" when going live
+  // ── configuration ─────────────────────────────────────────────────────────
 
-if (typeof solanaWeb3 === "undefined") {
-  document.addEventListener("DOMContentLoaded", () => {
-    const status = document.getElementById("status");
-    if (status) {
-      status.textContent =
-        "Could not load the Solana library. Check your connection and reload the page.";
-    }
-  });
-  throw new Error("solanaWeb3 failed to load from the CDN.");
-}
+  var NETWORK = 'devnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
 
-const {
-  Connection,
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  LAMPORTS_PER_SOL
-} = solanaWeb3;
+  var RPC = {
+    'mainnet-beta': 'https://api.mainnet-beta.solana.com',
+    devnet: 'https://api.devnet.solana.com',
+    testnet: 'https://api.testnet.solana.com'
+  };
 
-const connection = new Connection(
-  solanaWeb3.clusterApiUrl(NETWORK),
-  "confirmed"
-);
+  var STORAGE_KEY = 'paytag.savedTags.v1';
+  var CONFIRM_TIMEOUT_MS = 45000;
+  var FEE_BUFFER_LAMPORTS = 10000;
 
+  // ── dependencies ──────────────────────────────────────────────────────────
 
-// --------------------------------------------------
-// ELEMENTS
-// --------------------------------------------------
-
-const connectButton =
-  document.getElementById("connectButton");
-
-const walletDisconnected =
-  document.getElementById("walletDisconnected");
-
-const walletConnected =
-  document.getElementById("walletConnected");
-
-const status =
-  document.getElementById("status");
-
-const usernameInput =
-  document.getElementById("username");
-
-const saveButton =
-  document.getElementById("saveButton");
-
-const paytagResult =
-  document.getElementById("paytagResult");
-
-const paytagUrl =
-  document.getElementById("paytagUrl");
-
-const copyButton =
-  document.getElementById("copyButton");
-
-const paymentSection =
-  document.getElementById("paymentSection");
-
-const sendButton =
-  document.getElementById("sendButton");
-
-const customAmount =
-  document.getElementById("customAmount");
-
-const paymentStatus =
-  document.getElementById("paymentStatus");
-
-const paymentConnectButton =
-  document.getElementById("paymentConnectButton");
-
-const paymentForm =
-  document.getElementById("paymentForm");
-
-
-// --------------------------------------------------
-// WALLET
-// --------------------------------------------------
-
-let walletPublicKey = null;
-let recipientWallet = null;
-
-
-// Detect Phantom / Solana wallet
-
-function getWallet() {
-
-  if ("solana" in window) {
-
-    const wallet = window.solana;
-
-    if (wallet.isPhantom) {
-      return wallet;
-    }
-
+  var core = window.PayTagCore;
+  if (!core) {
+    window.addEventListener('load', function () {
+      fatal('paytag-core.js failed to load. Reload the page.');
+    });
+    return;
   }
 
-  return null;
-}
+  if (typeof window.solanaWeb3 === 'undefined') {
+    window.addEventListener('load', function () {
+      fatal('Could not load the Solana library. Check your connection and reload.');
+    });
+    return;
+  }
 
+  var Connection = window.solanaWeb3.Connection;
+  var PublicKey = window.solanaWeb3.PublicKey;
+  var SystemProgram = window.solanaWeb3.SystemProgram;
+  var Transaction = window.solanaWeb3.Transaction;
 
-// --------------------------------------------------
-// CONNECT WALLET (owner flow: create your PayTag)
-// --------------------------------------------------
+  var connection = new Connection(RPC[NETWORK] || RPC.devnet, 'confirmed');
 
-connectButton.addEventListener(
-  "click",
-  async () => {
+  // ── state ─────────────────────────────────────────────────────────────────
 
-    const wallet = getWallet();
+  var ownerKey = null;   // connected wallet creating a PayTag
+  var payerKey = null;   // connected wallet paying someone
+  var paytag = null;     // { handle, address } when visiting a PayTag
+  var savedTags = loadSavedTags();
 
-    if (!wallet) {
+  // ── small helpers ─────────────────────────────────────────────────────────
 
-      status.textContent =
-        "No compatible Solana wallet found. Install Phantom first.";
+  function $(id) {
+    return document.getElementById(id);
+  }
 
-      return;
+  function fatal(msg) {
+    var s = $('status');
+    if (s) {
+      s.textContent = msg;
+      s.className = 'status status--error';
     }
+  }
+
+  function setStatus(node, msg, kind) {
+    if (!node) return;
+    node.textContent = msg || '';
+    node.className = 'status' + (kind ? ' status--' + kind : '');
+  }
+
+  function show(node, visible) {
+    if (!node) return;
+    node.classList.toggle('hidden', !visible);
+  }
+
+  /** Copy with a fallback for insecure contexts (http://, file://). */
+  async function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (e) {
+        /* fall through to the legacy path */
+      }
+    }
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** Replace a container's contents with plain text plus one safe link. */
+  function renderStatus(container, prefix, link) {
+    container.textContent = '';
+    if (prefix) {
+      container.appendChild(document.createTextNode(prefix));
+    }
+    if (link && link.href && link.label) {
+      var a = document.createElement('a');
+      a.href = link.href;
+      a.textContent = link.label;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      container.appendChild(document.createTextNode(' '));
+      container.appendChild(a);
+    }
+  }
+
+  // ── saved tags (local only, never leaves the device) ──────────────────────
+
+  function loadSavedTags() {
+    try {
+      var raw = window.localStorage.getItem(STORAGE_KEY);
+      var parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter(isUsableTag) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function isUsableTag(t) {
+    return !!(t && core.looksLikeAddress(t.address) && core.isValidHandle(t.handle));
+  }
+
+  function saveTag(handle, address) {
+    var entry = { handle: handle, address: address, savedAt: Date.now() };
+    savedTags = [entry].concat(savedTags.filter(function (t) {
+      return t.handle !== handle;
+    })).slice(0, 5);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(savedTags));
+    } catch (e) {
+      /* private mode / quota — non-fatal */
+    }
+    renderSavedTags();
+  }
+
+  function renderSavedTags() {
+    var list = $('savedTags');
+    if (!list) return;
+    list.textContent = '';
+    show(list, savedTags.length > 0);
+    if (!savedTags.length) return;
+
+    var heading = document.createElement('p');
+    heading.className = 'saved-tags__heading';
+    heading.textContent = 'Your PayTags';
+    list.appendChild(heading);
+
+    savedTags.forEach(function (tag) {
+      var row = document.createElement('div');
+      row.className = 'saved-tag';
+
+      var link = document.createElement('a');
+      link.className = 'saved-tag__link';
+      link.href = core.buildShareUrl(window.location.origin, tag.handle, tag.address);
+      // textContent, never innerHTML — handles come from user input
+      link.textContent = '@' + tag.handle;
+
+      var addr = document.createElement('span');
+      addr.className = 'saved-tag__addr';
+      addr.textContent = core.truncateAddress(tag.address);
+
+      row.appendChild(link);
+      row.appendChild(addr);
+      list.appendChild(row);
+    });
+  }
+
+  // ── wallet ────────────────────────────────────────────────────────────────
+
+  function getWallet() {
+    var w = window.solana;
+    if (!w) return null;
+    if (w.isPhantom) return w;
+    // Tolerate other injected Solana wallets that do not set isPhantom.
+    if (typeof w.connect === 'function' && typeof w.signTransaction === 'function') return w;
+    return null;
+  }
+
+  /**
+   * Connect, asking for the app's cluster when the wallet supports it.
+   * Older wallets reject the options object, so fall back to a bare connect().
+   */
+  async function connectWallet() {
+    var wallet = getWallet();
+    if (!wallet) throw new Error('NO_WALLET');
 
     try {
-
-      status.textContent =
-        "Connecting...";
-
-      const response =
-        await wallet.connect();
-
-      walletPublicKey =
-        response.publicKey;
-
-      status.textContent = "";
-
-      walletDisconnected.classList.add(
-        "hidden"
-      );
-
-      walletConnected.classList.remove(
-        "hidden"
-      );
-
-      // NOTE: the payment section is only for people visiting someone
-      // else's PayTag link (see loadPayTag() below) — it should stay
-      // hidden here, on the owner's own "create a tag" page.
-
-    } catch (error) {
-
-      console.error(error);
-
-      status.textContent =
-        "Wallet connection was cancelled.";
-
+      return await wallet.connect({ network: NETWORK });
+    } catch (e) {
+      var msg = String((e && e.message) || '');
+      if (/network|unsupported|argument|options/i.test(msg)) {
+        return await wallet.connect();
+      }
+      throw e;
     }
-
   }
-);
 
-
-// --------------------------------------------------
-// CREATE PAYTAG
-// --------------------------------------------------
-
-saveButton.addEventListener(
-  "click",
-  () => {
-
-    if (!walletPublicKey) {
-
-      return;
-
+  /** True when the connected wallet is reachable on the configured cluster. */
+  async function probeCluster(pubkey) {
+    try {
+      await connection.getBalance(new PublicKey(pubkey));
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
     }
-
-    let username =
-      usernameInput.value.trim().toLowerCase();
-
-    username =
-      username.replace(
-        /[^a-z0-9_-]/g,
-        ""
-      );
-
-    if (!username) {
-
-      alert(
-        "Please enter a username."
-      );
-
-      return;
-
-    }
-
-    const url =
-      `${window.location.origin}/?user=${username}&wallet=${walletPublicKey.toString()}`;
-
-    paytagUrl.textContent = url;
-
-    paytagResult.classList.remove(
-      "hidden"
-    );
-
   }
-);
 
+  // ── owner flow: create a PayTag ───────────────────────────────────────────
 
-// --------------------------------------------------
-// COPY PAYMENT LINK
-// --------------------------------------------------
+  function initOwner() {
+    $('connectButton').addEventListener('click', async function () {
+      var status = $('status');
+      var btn = this;
+      setStatus(status, 'Connecting…');
+      btn.disabled = true;
 
-copyButton.addEventListener(
-  "click",
-  async () => {
+      try {
+        var response = await connectWallet();
+        ownerKey = response.publicKey;
 
-    await navigator.clipboard.writeText(
-      paytagUrl.textContent
-    );
+        var probe = await probeCluster(ownerKey);
+        if (!probe.ok) {
+          setStatus(
+            status,
+            'Connected, but your wallet is not reachable on ' +
+              core.networkLabel(NETWORK) + '. Switch networks in your wallet.',
+            'error'
+          );
+          btn.disabled = false;
+          return;
+        }
 
-    copyButton.textContent =
-      "Copied!";
+        setStatus(status, '');
+        $('connectedWallet').textContent =
+          'Connected: ' + core.truncateAddress(ownerKey.toString(), 6, 6);
+        show($('walletDisconnected'), false);
+        show($('walletConnected'), true);
+        $('username').focus();
+      } catch (e) {
+        btn.disabled = false;
+        if (e && e.message === 'NO_WALLET') {
+          setStatus(status, 'No Solana wallet found. Install Phantom, then reload.', 'error');
+        } else if (e && /reject/i.test(String(e.message || ''))) {
+          setStatus(status, 'Connection cancelled.');
+        } else {
+          console.error(e);
+          setStatus(status, 'Could not connect. ' + (e && e.message ? e.message : ''), 'error');
+        }
+      }
+    });
 
-    setTimeout(
-      () => {
+    var input = $('username');
+    input.addEventListener('input', function () {
+      var handle = core.normalizeHandle(input.value);
+      var problem = core.handleProblem(handle);
+      var hint = $('handleHint');
+      if (!hint) return;
+      hint.textContent = problem || ('Your PayTag will be @' + handle);
+      hint.className = 'handle-hint' + (problem ? ' handle-hint--error' : '');
+    });
 
-        copyButton.textContent =
-          "Copy Payment Link";
+    $('saveButton').addEventListener('click', function () {
+      var status = $('status');
+      if (!ownerKey) {
+        setStatus(status, 'Connect your wallet first.', 'error');
+        return;
+      }
 
-      },
-      2000
-    );
+      var handle = core.normalizeHandle(input.value);
+      var problem = core.handleProblem(handle);
+      if (problem) {
+        setStatus(status, problem, 'error');
+        input.focus();
+        return;
+      }
 
+      var address = ownerKey.toString();
+      var url = core.buildShareUrl(window.location.origin, handle, address);
+
+      saveTag(handle, address);
+
+      $('paytagUrl').textContent = url;
+      $('paytagHandle').textContent = '@' + handle;
+      show($('paytagResult'), true);
+      setStatus(status, 'PayTag ready.', 'ok');
+    });
+
+    $('copyButton').addEventListener('click', async function () {
+      var btn = this;
+      var url = $('paytagUrl').textContent;
+      var ok = await copyText(url);
+      btn.textContent = ok ? 'Copied!' : 'Select and copy';
+      window.setTimeout(function () {
+        btn.textContent = 'Copy link';
+      }, 2000);
+      if (!ok) {
+        var range = document.createRange();
+        range.selectNodeContents($('paytagUrl'));
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    });
+
+    renderSavedTags();
   }
-);
 
+  // ── visitor flow: pay a PayTag ────────────────────────────────────────────
 
-// --------------------------------------------------
-// PRESET AMOUNTS
-// --------------------------------------------------
+  function initPayer(paytagData) {
+    paytag = paytagData;
 
-document
-  .querySelectorAll(".amount-button")
-  .forEach(button => {
+    $('recipientName').textContent = paytag.handle
+      ? 'Pay @' + paytag.handle
+      : 'Pay this address';
 
-    button.addEventListener(
-      "click",
-      () => {
+    var addrEl = $('recipientAddress');
+    addrEl.textContent = core.truncateAddress(paytag.address);
+    addrEl.href = core.explorerAddressUrl(paytag.address, NETWORK);
 
-        customAmount.value =
-          button.dataset.amount;
+    $('paymentConnectButton').addEventListener('click', async function () {
+      var status = $('paymentStatus');
+      var btn = this;
+      setStatus(status, 'Connecting…');
+      btn.disabled = true;
 
+      try {
+        var response = await connectWallet();
+        payerKey = response.publicKey;
+
+        var probe = await probeCluster(payerKey);
+        if (!probe.ok) {
+          setStatus(
+            status,
+            'Your wallet is not reachable on ' + core.networkLabel(NETWORK) +
+              '. Switch networks in your wallet and try again.',
+            'error'
+          );
+          btn.disabled = false;
+          return;
+        }
+
+        btn.textContent = 'Wallet connected';
+        show($('paymentForm'), true);
+        setStatus(status, '');
+        $('customAmount').focus();
+      } catch (e) {
+        btn.disabled = false;
+        if (e && e.message === 'NO_WALLET') {
+          setStatus(status, 'No Solana wallet found. Install Phantom, then reload.', 'error');
+        } else if (e && /reject/i.test(String(e.message || ''))) {
+          setStatus(status, 'Connection cancelled.');
+        } else {
+          console.error(e);
+          setStatus(status, 'Could not connect. ' + (e && e.message ? e.message : ''), 'error');
+        }
+      }
+    });
+
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.amount-button'),
+      function (btn) {
+        btn.addEventListener('click', function () {
+          $('customAmount').value = btn.dataset.amount;
+          Array.prototype.forEach.call(
+            document.querySelectorAll('.amount-button'),
+            function (b) {
+              var on = b === btn;
+              b.classList.toggle('is-selected', on);
+              b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
+          );
+        });
       }
     );
 
-  });
+    $('sendButton').addEventListener('click', sendPayment);
+  }
 
+  async function sendPayment() {
+    var status = $('paymentStatus');
+    var btn = $('sendButton');
+    var lamports = core.lamportsFromSol($('customAmount').value);
 
-// --------------------------------------------------
-// SEND SOL
-// --------------------------------------------------
-
-sendButton.addEventListener(
-  "click",
-  async () => {
-
-    paymentStatus.textContent =
-      "";
-
-    const wallet =
-      getWallet();
-
-    if (!wallet) {
-
-      paymentStatus.textContent =
-        "Please connect a Solana wallet.";
-
+    if (!lamports) {
+      setStatus(status, 'Enter an amount greater than zero.', 'error');
       return;
-
     }
 
-    const amount =
-      parseFloat(
-        customAmount.value
+    var wallet = getWallet();
+    if (!wallet || !payerKey) {
+      setStatus(status, 'Connect your wallet first.', 'error');
+      return;
+    }
+
+    if (core.isLiveNetwork(NETWORK)) {
+      var proceed = window.confirm(
+        'About to send ' + core.solFromLamports(lamports) + ' SOL on MAINNET to\n' +
+          paytag.address + '\n\nMainnet transactions cannot be reversed. Continue?'
       );
-
-    if (
-      !amount ||
-      amount <= 0
-    ) {
-
-      paymentStatus.textContent =
-        "Enter a valid amount.";
-
-      return;
-
+      if (!proceed) return;
     }
 
-
-    // Get recipient from URL
-
-    const params =
-      new URLSearchParams(
-        window.location.search
-      );
-
-    const recipientAddress =
-      params.get("wallet");
-
-
-    if (!recipientAddress) {
-
-      paymentStatus.textContent =
-        "No recipient wallet was found.";
-
-      return;
-
-    }
-
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    var originalLabel = btn.textContent;
 
     try {
+      setStatus(status, 'Checking balance…');
 
-      sendButton.disabled =
-        true;
-
-      sendButton.textContent =
-        "Preparing transaction...";
-
-
-      const recipient =
-        new PublicKey(
-          recipientAddress
+      var balance = await connection.getBalance(payerKey);
+      if (lamports + FEE_BUFFER_LAMPORTS > balance) {
+        setStatus(
+          status,
+          'Not enough SOL. You have ' + core.solFromLamports(balance) + ' SOL available.',
+          'error'
         );
+        return;
+      }
 
+      setStatus(status, 'Preparing transaction…');
 
-      // Convert SOL → lamports
-
-      const lamports =
-        Math.round(
-          amount *
-          LAMPORTS_PER_SOL
-        );
-
-
-      // Create transaction
-
-      const transaction =
-        new Transaction().add(
-
-          SystemProgram.transfer({
-
-            fromPubkey:
-              walletPublicKey,
-
-            toPubkey:
-              recipient,
-
-            lamports:
-              lamports
-
-          })
-
-        );
-
-
-      // Get recent blockhash
-
-      const {
-        blockhash
-      } =
-        await connection.getLatestBlockhash();
-
-
-      transaction.recentBlockhash =
-        blockhash;
-
-      transaction.feePayer =
-        walletPublicKey;
-
-
-      sendButton.textContent =
-        "Approve in wallet...";
-
-
-      // Ask wallet to sign
-
-      const signed =
-        await wallet.signTransaction(
-          transaction
-        );
-
-
-      sendButton.textContent =
-        "Sending...";
-
-
-      const signature =
-        await connection.sendRawTransaction(
-          signed.serialize()
-        );
-
-
-      await connection.confirmTransaction(
-        signature,
-        "confirmed"
+      var transaction = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: payerKey,
+          toPubkey: new PublicKey(paytag.address),
+          lamports: lamports
+        })
       );
 
+      // web3.js 1.98.x still uses these property assignments.
+      var latest = await connection.getLatestBlockhash();
+      transaction.recentBlockhash = latest.blockhash;
+      transaction.feePayer = payerKey;
 
-      paymentStatus.innerHTML =
-        `
-        Payment successful!<br>
-        <a
-          href="https://solscan.io/tx/${signature}?cluster=${NETWORK}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          View transaction
-        </a>
-        `;
+      setStatus(status, 'Approve in your wallet…');
+      var signed = await wallet.signTransaction(transaction);
 
+      setStatus(status, 'Sending…');
+      var signature = await connection.sendRawTransaction(signed.serialize());
 
-    } catch (error) {
+      var explorer = {
+        href: core.explorerTxUrl(signature, NETWORK),
+        label: 'View transaction'
+      };
 
-      console.error(error);
+      setStatus(status, 'Waiting for confirmation…');
 
-      paymentStatus.textContent =
-        "Payment cancelled or failed.";
+      // Bounded wait: if it does not confirm in time we still hand back the
+      // signature and an explorer link rather than hanging forever.
+      var confirmed = await confirmWithTimeout(signature, CONFIRM_TIMEOUT_MS);
 
+      if (confirmed) {
+        renderStatus(status, 'Payment sent — ' + core.solFromLamports(lamports) + ' SOL.', explorer);
+      } else {
+        renderStatus(status, 'Submitted, not confirmed yet. It may still land —', explorer);
+      }
+    } catch (e) {
+      console.error(e);
+      var msg = String((e && e.message) || e);
+      if (/reject|declin|cancel/i.test(msg)) {
+        setStatus(status, 'Cancelled in your wallet.', 'error');
+      } else {
+        setStatus(status, 'Payment failed: ' + msg, 'error');
+      }
+    } finally {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      btn.textContent = originalLabel;
     }
-
-
-    sendButton.disabled =
-      false;
-
-    sendButton.textContent =
-      "Send SOL";
-
   }
-);
 
+  /** Promise.race between confirmation and a timeout. Never rejects. */
+  function confirmWithTimeout(signature, ms) {
+    return Promise.race([
+      connection
+        .confirmTransaction(signature, 'confirmed')
+        .then(function (res) {
+          return !!(res && res.value && res.value.err === null);
+        })
+        .catch(function () {
+          return false;
+        }),
+      new Promise(function (resolve) {
+        window.setTimeout(function () {
+          resolve(false);
+        }, ms);
+      })
+    ]);
+  }
 
-// --------------------------------------------------
-// LOAD EXISTING PAYTAG (visitor flow: pay someone else)
-// --------------------------------------------------
+  // ── invalid link state ────────────────────────────────────────────────────
 
-function loadPayTag() {
+  function initInvalidLink(reason) {
+    show($('walletDisconnected'), false);
+    show($('walletConnected'), false);
+    show($('paymentSection'), false);
+    $('invalidReason').textContent = reason;
+    show($('invalidCard'), true);
+  }
 
-  const params =
-    new URLSearchParams(
+  // ── boot ──────────────────────────────────────────────────────────────────
+
+  function boot() {
+    // Badge is driven by NETWORK so it can never contradict the code.
+    var badge = $('networkBadge');
+    badge.textContent = core.networkLabel(NETWORK);
+    badge.classList.toggle('network-badge--live', core.isLiveNetwork(NETWORK));
+
+    var result = core.parsePayTagFromLocation(
+      window.location.pathname,
       window.location.search
     );
 
-  const username =
-    params.get("user");
-
-  const wallet =
-    params.get("wallet");
-
-  if (username && wallet) {
-
-    recipientWallet = wallet;
-
-    walletDisconnected.classList.add(
-      "hidden"
-    );
-
-    walletConnected.classList.add(
-      "hidden"
-    );
-
-    paymentSection.classList.remove(
-      "hidden"
-    );
-
-    document.getElementById(
-      "recipientName"
-    ).textContent =
-      `Pay @${username}`;
-
+    if (result.ok) {
+      // Payer view: the owner-facing cards must be hidden, otherwise a
+      // visitor sees "Get your PayTag" above someone else's payment form.
+      show($('walletDisconnected'), false);
+      show($('walletConnected'), false);
+      show($('savedTags'), false);
+      show($('paymentSection'), true);
+      initPayer(result);
+    } else if (result.reason !== 'empty') {
+      initInvalidLink(result.reason);
+    } else {
+      initOwner();
+    }
   }
 
-}
-
-
-// --------------------------------------------------
-// PAYMENT WALLET CONNECTION
-// --------------------------------------------------
-
-paymentConnectButton.addEventListener(
-  "click",
-  async () => {
-
-    const wallet =
-      getWallet();
-
-    if (!wallet) {
-
-      paymentStatus.textContent =
-        "Please install a Solana wallet such as Phantom.";
-
-      return;
-
-    }
-
-    try {
-
-      const response =
-        await wallet.connect();
-
-      walletPublicKey =
-        response.publicKey;
-
-      paymentConnectButton.textContent =
-        "Wallet connected";
-
-      paymentConnectButton.disabled =
-        true;
-
-      paymentForm.classList.remove(
-        "hidden"
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      paymentStatus.textContent =
-        "Wallet connection was cancelled.";
-
-    }
-
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
   }
-);
-
-loadPayTag();
+})();

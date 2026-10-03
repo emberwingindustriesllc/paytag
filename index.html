@@ -3,155 +3,135 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <title>PayTag — Pay anyone directly</title>
+  <meta name="description" content="Pay anyone with Solana. Create a shareable PayTag link and receive SOL payments directly — no account, no backend.">
+  <meta name="color-scheme" content="light dark">
 
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="style.css">
 
-  <!-- Solana Web3.js -->
+  <!--
+    Solana web3.js. Pinned deliberately: the transaction-building API differs
+    between majors, and app.js is written against 1.98.x.
+  -->
   <script src="https://unpkg.com/@solana/web3.js@1.98.4/lib/index.iife.min.js"></script>
 </head>
 
 <body>
-
   <main class="container">
 
     <header>
       <div class="logo">PAY<span>TAG</span></div>
       <p class="tagline">Pay anyone. Anywhere.</p>
-      <span class="network-badge">Devnet</span>
+      <!-- Label is written by app.js from the NETWORK constant so it can
+           never contradict the cluster the app is actually using. -->
+      <span class="network-badge" id="networkBadge">…</span>
     </header>
 
-    <section class="card">
-
-      <div id="walletDisconnected">
-
-        <h1>Get your PayTag</h1>
-
-        <p>
-          Connect your Solana wallet and create a simple payment page
-          that you can share anywhere.
-        </p>
-
-        <button id="connectButton" class="primary-button">
-          Connect Solana Wallet
-        </button>
-
-        <p id="status" class="status"></p>
-
-      </div>
-
-
-      <div id="walletConnected" class="hidden">
-
-        <div class="success">
-          ✓ Wallet connected
-        </div>
-
-        <h1>Your PayTag</h1>
-
-        <div class="username-box">
-          <span>@</span>
-          <input
-            id="username"
-            type="text"
-            placeholder="username"
-            maxlength="20"
-          >
-        </div>
-
-        <button id="saveButton" class="primary-button">
-          Create PayTag
-        </button>
-
-        <div id="paytagResult" class="hidden result">
-
-          <p>Your PayTag</p>
-
-          <div id="paytagUrl" class="paytag-url"></div>
-
-          <button id="copyButton" class="secondary-button">
-            Copy Payment Link
-          </button>
-
-        </div>
-
-      </div>
-
+    <!-- ── invalid PayTag link ─────────────────────────────────────────── -->
+    <section class="card hidden" id="invalidCard">
+      <h1>That link won't work</h1>
+      <p id="invalidReason"></p>
+      <p class="muted">
+        A PayTag link looks like
+        <code>paytag.app/?tag=yourname&amp;to=YOUR_SOLANA_ADDRESS</code>.
+        Ask the sender for a fresh link.
+      </p>
     </section>
 
+    <!-- ── owner flow: create your PayTag ──────────────────────────────── -->
+    <section class="card" id="walletDisconnected">
 
-    <!-- Payment section -->
+      <h1>Get your PayTag</h1>
+      <p>Connect your Solana wallet and create a payment link you can share anywhere.</p>
 
+      <button id="connectButton" class="primary-button">
+        Connect Solana Wallet
+      </button>
+
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <!-- ── owner flow: connected ───────────────────────────────────────── -->
+    <section class="card hidden" id="walletConnected">
+      <div class="success">✓ Wallet connected</div>
+      <p class="muted" id="connectedWallet"></p>
+
+      <h1>Your PayTag</h1>
+
+      <div class="username-box">
+        <span aria-hidden="true">@</span>
+        <input
+          id="username"
+          type="text"
+          inputmode="text"
+          autocomplete="off"
+          autocapitalize="none"
+          spellcheck="false"
+          placeholder="yourname"
+          maxlength="20"
+          aria-describedby="handleHint"
+        >
+      </div>
+      <p class="handle-hint" id="handleHint">Letters, numbers, - and _.</p>
+
+      <button id="saveButton" class="primary-button">Create PayTag</button>
+
+      <div id="paytagResult" class="hidden result">
+        <p>Your PayTag <strong id="paytagHandle"></strong></p>
+        <div id="paytagUrl" class="paytag-url"></div>
+        <button id="copyButton" class="secondary-button">Copy link</button>
+      </div>
+    </section>
+
+    <!-- saved tags, local only -->
+    <section id="savedTags" class="saved-tags hidden"></section>
+
+    <!-- ── visitor flow: pay a PayTag ──────────────────────────────────── -->
     <section id="paymentSection" class="card hidden">
-
-      <h2>Send a payment</h2>
-
+      <h2 id="recipientName">Send a payment</h2>
       <p>
-        Send SOL directly to this PayTag.
+        Paying
+        <a id="recipientAddress" class="mono" href="#" target="_blank" rel="noopener noreferrer"></a>
       </p>
-
-      <div id="recipientName"></div>
 
       <button id="paymentConnectButton" class="primary-button">
         Connect Wallet to Pay
       </button>
 
       <div id="paymentForm" class="hidden">
-
-        <div class="amount-buttons">
-
-          <button class="amount-button" data-amount="0.01">
-            0.01 SOL
-          </button>
-
-          <button class="amount-button" data-amount="0.05">
-            0.05 SOL
-          </button>
-
-          <button class="amount-button" data-amount="0.1">
-            0.10 SOL
-          </button>
-
+        <div class="amount-buttons" role="group" aria-label="Preset amounts">
+          <button class="amount-button" data-amount="0.01" aria-pressed="false">0.01 SOL</button>
+          <button class="amount-button" data-amount="0.05" aria-pressed="false">0.05 SOL</button>
+          <button class="amount-button" data-amount="0.1"  aria-pressed="false">0.10 SOL</button>
         </div>
 
         <div class="custom-amount">
-
-          <label for="customAmount">
-            Custom amount
-          </label>
-
+          <label for="customAmount">Custom amount</label>
           <input
             id="customAmount"
             type="number"
-            min="0.001"
+            inputmode="decimal"
+            min="0.000000001"
             step="0.001"
             placeholder="0.00"
           >
-
         </div>
 
-        <button id="sendButton" class="primary-button">
-          Send SOL
-        </button>
+        <button id="sendButton" class="primary-button">Send SOL</button>
 
-        <p id="paymentStatus" class="status"></p>
-
+        <p id="paymentStatus" class="status" role="status" aria-live="polite"></p>
       </div>
-
     </section>
 
-
     <footer>
-      <p>
-        Payments powered by Solana
-      </p>
+      <p>Payments powered by Solana. Nothing is stored on a server.</p>
     </footer>
 
   </main>
 
-
+  <script src="paytag-core.js"></script>
   <script src="app.js"></script>
-
 </body>
 </html>

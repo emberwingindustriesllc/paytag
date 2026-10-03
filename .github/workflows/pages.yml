@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deploy at a time; never cancel a live one mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # PayTag is a static site with no build step — staging the files the
+      # browser actually needs IS the entire "build". Staging explicitly
+      # avoids publishing .git, tests, or CI config to the live site.
+      - name: Guard
+        run: |
+          npm run lint
+          npm test
+          echo "checks passed; staging static files"
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp index.html style.css app.js paytag-core.js \
+             favicon.svg manifest.webmanifest 404.html _site/
+          echo "staged:"
+          ls -1 _site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_site'
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
