@@ -100,6 +100,46 @@ test('parsePayTag rejects malformed links with a reason', () => {
   assert.match(core.parsePayTag('?tag=alice&to=nope').reason, /invalid Solana address/i);
 });
 
+test('REGRESSION: a sub-path deployment prefix is not mistaken for a handle',
+  () => {
+    // GitHub Pages serves this site at /paytag/. The old parser read "paytag"
+    // as a handle, then found no address and rendered the error card on the
+    // bare root URL instead of the "Get your PayTag" screen.
+    for (const prefix of ['/paytag/', '/app/', '/my-repo/', '/x/']) {
+      const r = core.parsePayTagFromLocation(prefix, '');
+      assert.deepEqual(r, { ok: false, reason: 'empty' },
+        `${prefix} with no query must be the owner page`);
+    }
+    assert.equal(core.parsePayTagFromLocation('/paytag', '').reason, 'empty');
+  });
+
+test('REGRESSION: the URL 404.html produces is parsed correctly', () => {
+  // Under a sub-path deployment a short link /paytag/alice?to=ADDR is
+  // normalised by 404.html to /paytag/?tag=alice&to=ADDR. That normalised
+  // URL is what the app must parse — this is the real handoff.
+  const r = core.parsePayTagFromLocation(
+    '/paytag/',
+    '?tag=alice&to=' + VALID_ADDRESS
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.handle, 'alice');
+  assert.equal(r.address, VALID_ADDRESS);
+});
+
+test('single-segment short form works on a root deployment', () => {
+  // Custom domain / or a plain static host: /alice?to=ADDR
+  const r = core.parsePayTagFromLocation('/alice', '?to=' + VALID_ADDRESS);
+  assert.equal(r.ok, true);
+  assert.equal(r.handle, 'alice');
+});
+
+test('an explicit tag with no address is still reported as broken', () => {
+  // Real intent — the sender made a tag but forgot the address.
+  const r = core.parsePayTagFromLocation('/paytag/', '?tag=alice');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /missing a destination/i);
+});
+
 test('parsePayTagFromLocation supports the /handle path form', () => {
   const r = core.parsePayTagFromLocation('/alice', '?to=' + VALID_ADDRESS);
   assert.equal(r.ok, true);

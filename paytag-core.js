@@ -163,24 +163,34 @@
   }
 
   /**
-   * Parse a PayTag from a full location, supporting BOTH the canonical
-   * query-string form and the optional /handle path form.
+   * Parse a PayTag from a full location.
+   *
+   * Supports the canonical query-string form (?tag=alice&to=ADDR) and the
+   * optional /alice?to=ADDR path form.
+   *
+   * IMPORTANT: the path form is only honoured when an actual destination
+   * address is present. A site deployed under a sub-path (GitHub Pages serves
+   * this one at /paytag/) would otherwise have its OWN deployment prefix
+   * mistaken for a handle, which broke the bare root URL.
+   * A handle with no address cannot be paid anyway, so nothing is lost.
    *
    * @param {string} pathname e.g. '/alice'
    * @param {string} search    e.g. '?to=ADDR'
    */
   function parsePayTagFromLocation(pathname, search) {
-    var handleFromPath = '';
-    var p = String(pathname || '');
-    // only the first segment, and only if it is not the site root
-    var m = p.match(/^\/([^/?#]+)\/?$/);
-    if (m && m[1] && m[1].toLowerCase() !== 'index.html') {
-      handleFromPath = decodeURIComponent(m[1]);
-    }
-
     var params = new URLSearchParams(search || '');
-    var handle = params.get(PARAM_HANDLE) || params.get(LEGACY.handle) || handleFromPath || '';
     var address = params.get(PARAM_ADDRESS) || params.get(LEGACY.address) || '';
+    var queryHandle = params.get(PARAM_HANDLE) || params.get(LEGACY.handle) || '';
+
+    // Only look at the path when the URL actually carries an address.
+    var handle = queryHandle;
+    if (address && !handle) {
+      var p = String(pathname || '');
+      var m = p.match(/^\/([^/?#]+)\/?$/);
+      if (m && m[1] && m[1].toLowerCase() !== 'index.html') {
+        handle = decodeURIComponent(m[1]);
+      }
+    }
 
     return validatePayTagParts(handle, address);
   }

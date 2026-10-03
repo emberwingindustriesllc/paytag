@@ -205,6 +205,26 @@ test('bad link: a missing address is reported specifically', () => {
   assert.match(els.invalidReason.textContent, /missing a destination/i);
 });
 
+test('REGRESSION: owner page renders under a /paytag/ deployment prefix', () => {
+  // This is the exact path GitHub Pages serves. The live site showed the
+  // error card here because "paytag" was parsed as a handle.
+  const { els } = boot({ pathname: '/paytag/', search: '' });
+  assert.equal(els.invalidCard.classes.has('hidden'), true,
+    'bare /paytag/ must NOT show the error card');
+  assert.equal(els.walletDisconnected.classes.has('hidden'), false,
+    'bare /paytag/ must show the create-PayTag card');
+  assert.equal(els.paymentSection.classes.has('hidden'), true);
+});
+
+test('REGRESSION: a PayTag link still pays under the /paytag/ prefix', () => {
+  const { els } = boot({
+    pathname: '/paytag/',
+    search: '?tag=alice&to=' + VALID_ADDRESS
+  });
+  assert.equal(els.paymentSection.classes.has('hidden'), false);
+  assert.equal(els.recipientName.textContent, 'Pay @alice');
+});
+
 test('short /handle path form is accepted', () => {
   const { els } = boot({ pathname: '/alice', search: '?to=' + VALID_ADDRESS });
   assert.equal(els.paymentSection.classes.has('hidden'), false);
