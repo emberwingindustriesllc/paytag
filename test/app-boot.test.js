@@ -167,7 +167,7 @@ test('owner flow: bare URL shows the create-PayTag card', () => {
 
 test('network badge is written from the NETWORK constant', () => {
   const { els } = boot();
-  assert.equal(els.networkBadge.textContent, 'Devnet');
+  assert.equal(els.networkBadge.textContent, 'Testnet');
   assert.equal(els.networkBadge.classes.has('network-badge--live'), false);
 });
 
@@ -178,7 +178,7 @@ test('payer flow: a valid PayTag link shows the payment card', () => {
   assert.equal(els.recipientName.textContent, 'Pay @alice');
   assert.equal(els.recipientAddress.textContent, '9xQe…VFin',
     'address should be truncated for display');
-  assert.ok(els.recipientAddress.href.includes('cluster=devnet'),
+  assert.ok(els.recipientAddress.href.includes('cluster=testnet'),
     'explorer link should target the configured cluster');
   assert.equal(els.walletDisconnected.classes.has('hidden'), true,
     'owner card must be hidden when visiting someone else');
@@ -271,6 +271,31 @@ test('send validates the amount before touching the wallet', async () => {
   assert.match(els.paymentStatus.textContent, /greater than zero/i);
 });
 
+test('REGRESSION: share URLs include the deployment path', async () => {
+  // GitHub Pages serves this site at /paytag/. The share URL must include
+  // that path, or the link points to the root of the domain and 404s.
+  const { els } = boot({ pathname: '/paytag/', withWallet: true });
+
+  // Connect wallet
+  els.connectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+
+  // Set username and create PayTag
+  els.username.value = 'alice';
+  els.saveButton.listeners.click[0]();
+
+  // The generated URL should include the /paytag/ path
+  assert.ok(els.paytagUrl.textContent.includes('/paytag/'),
+    'share URL should include the deployment path');
+  assert.ok(els.paytagUrl.textContent.includes('?tag=alice&to='),
+    'share URL should have the correct query string');
+
+  // The saved tag link should also include the path
+  const savedLink = els.savedTags.children[1].children[0];
+  assert.ok(savedLink.href.includes('/paytag/'),
+    'saved tag link should include the deployment path');
+});
+
 test('a full send reaches the explorer link and reports success', async () => {
   const { els, sandbox } = boot({
     search: '?tag=alice&to=' + VALID_ADDRESS,
@@ -288,7 +313,7 @@ test('a full send reaches the explorer link and reports success', async () => {
   assert.match(els.paymentStatus.deepText, /Payment sent/i);
   const link = els.paymentStatus.children.find((c) => c.href);
   assert.ok(link, 'an explorer link should be rendered');
-  assert.match(link.href, /explorer\.solana\.com.*cluster=devnet/);
+  assert.match(link.href, /explorer\.solana\.com.*cluster=testnet/);
   assert.equal(link.rel, 'noopener noreferrer', 'external links need rel=noopener');
   assert.equal(els.sendButton.disabled, false, 'button must be re-enabled');
   assert.equal(els.sendButton.getAttribute('aria-busy'), undefined,

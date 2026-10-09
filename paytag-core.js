@@ -132,12 +132,10 @@
    */
   function parsePayTag(search) {
     try {
-      /* validated via URLSearchParams inside validatePayTagParts */
+      var params = new URLSearchParams(search || '');
       return validatePayTagParts(
-        new URLSearchParams(search || '').get(PARAM_HANDLE) ||
-          new URLSearchParams(search || '').get(LEGACY.handle),
-        new URLSearchParams(search || '').get(PARAM_ADDRESS) ||
-          new URLSearchParams(search || '').get(LEGACY.address)
+        params.get(PARAM_HANDLE) || params.get(LEGACY.handle),
+        params.get(PARAM_ADDRESS) || params.get(LEGACY.address)
       );
     } catch (e) {
       return { ok: false, reason: 'That PayTag link could not be read.' };

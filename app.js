@@ -24,7 +24,7 @@
 
   // ── configuration ─────────────────────────────────────────────────────────
 
-  var NETWORK = 'devnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
+  var NETWORK = 'testnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
 
   var RPC = {
     'mainnet-beta': 'https://api.mainnet-beta.solana.com',
@@ -182,7 +182,7 @@
 
       var link = document.createElement('a');
       link.className = 'saved-tag__link';
-      link.href = core.buildShareUrl(window.location.origin, tag.handle, tag.address);
+      link.href = core.buildShareUrl(window.location.origin + window.location.pathname, tag.handle, tag.address);
       // textContent, never innerHTML — handles come from user input
       link.textContent = '@' + tag.handle;
 
@@ -306,7 +306,7 @@
       }
 
       var address = ownerKey.toString();
-      var url = core.buildShareUrl(window.location.origin, handle, address);
+      var url = core.buildShareUrl(window.location.origin + window.location.pathname, handle, address);
 
       saveTag(handle, address);
 
@@ -503,20 +503,24 @@
 
   /** Promise.race between confirmation and a timeout. Never rejects. */
   function confirmWithTimeout(signature, ms) {
+    var timeoutId;
+    var timeoutPromise = new Promise(function (resolve) {
+      timeoutId = window.setTimeout(function () {
+        resolve(false);
+      }, ms);
+    });
     return Promise.race([
       connection
         .confirmTransaction(signature, 'confirmed')
         .then(function (res) {
+          window.clearTimeout(timeoutId);
           return !!(res && res.value && res.value.err === null);
         })
         .catch(function () {
+          window.clearTimeout(timeoutId);
           return false;
         }),
-      new Promise(function (resolve) {
-        window.setTimeout(function () {
-          resolve(false);
-        }, ms);
-      })
+      timeoutPromise
     ]);
   }
 
