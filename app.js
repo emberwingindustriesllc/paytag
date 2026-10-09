@@ -24,7 +24,7 @@
 
   // ── configuration ─────────────────────────────────────────────────────────
 
-  var NETWORK = 'testnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
+  var NETWORK = 'devnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
 
   var RPC = {
     'mainnet-beta': 'https://api.mainnet-beta.solana.com',
@@ -441,9 +441,17 @@
 
       var balance = await connection.getBalance(payerKey);
       if (lamports + FEE_BUFFER_LAMPORTS > balance) {
+        // A zero balance on the configured cluster almost always means the
+        // wallet is pointed at a DIFFERENT cluster than this app, not that the
+        // user is actually out of SOL. Say so, or the message is a dead end.
+        var hint = balance === 0
+          ? ' Your wallet may be on a different network — switch it to ' +
+            core.networkLabel(NETWORK) + ' and reload.'
+          : '';
         setStatus(
           status,
-          'Not enough SOL. You have ' + core.solFromLamports(balance) + ' SOL available.',
+          'Not enough SOL on ' + core.networkLabel(NETWORK) + '. You have ' +
+            core.solFromLamports(balance) + ' SOL available.' + hint,
           'error'
         );
         return;

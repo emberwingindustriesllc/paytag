@@ -62,7 +62,7 @@ function makeEl(id) {
 }
 
 /** Build a sandbox in which app.js can run to completion. */
-function boot({ pathname = '/', search = '', withWallet = false } = {}) {
+function boot({ pathname = '/', search = '', withWallet = false, balance = 5_000_000_000 } = {}) {
   // Seed the element map from the real markup so id wiring is genuinely
   // tested, INCLUDING each element's starting class list (so "starts hidden"
   // is a real assertion rather than an artefact of the stub).
@@ -129,7 +129,6 @@ function boot({ pathname = '/', search = '', withWallet = false } = {}) {
 
   // solanaWeb3 stub — app.js only touches these at call time, except
   // Connection which is constructed during evaluation.
-  let balance = 5_000_000_000; // 5 SOL
   sandbox.solanaWeb3 = {
     Connection: function () {
       return {
@@ -167,7 +166,7 @@ test('owner flow: bare URL shows the create-PayTag card', () => {
 
 test('network badge is written from the NETWORK constant', () => {
   const { els } = boot();
-  assert.equal(els.networkBadge.textContent, 'Testnet');
+  assert.equal(els.networkBadge.textContent, 'Devnet');
   assert.equal(els.networkBadge.classes.has('network-badge--live'), false);
 });
 
@@ -178,7 +177,7 @@ test('payer flow: a valid PayTag link shows the payment card', () => {
   assert.equal(els.recipientName.textContent, 'Pay @alice');
   assert.equal(els.recipientAddress.textContent, '9xQe…VFin',
     'address should be truncated for display');
-  assert.ok(els.recipientAddress.href.includes('cluster=testnet'),
+  assert.ok(els.recipientAddress.href.includes('cluster=devnet'),
     'explorer link should target the configured cluster');
   assert.equal(els.walletDisconnected.classes.has('hidden'), true,
     'owner card must be hidden when visiting someone else');
@@ -296,6 +295,44 @@ test('REGRESSION: share URLs include the deployment path', async () => {
     'saved tag link should include the deployment path');
 });
 
+test('a zero balance names the cluster and hints at a network mismatch', async () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true,
+    balance: 0
+  });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+
+  els.customAmount.value = '0.01';
+  await els.sendButton.listeners.click[0]();
+
+  const msg = els.paymentStatus.textContent;
+  assert.match(msg, /Not enough SOL on Devnet/i, msg);
+  assert.match(msg, /different network/i,
+    'a zero balance must hint that the wallet may be on another cluster');
+});
+
+test('a funded-but-short balance does not claim a network mismatch', async () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true,
+    balance: 5_000_000 // 0.005 SOL — has funds, but not enough for 1 SOL
+  });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+
+  els.customAmount.value = '1';
+  await els.sendButton.listeners.click[0]();
+
+  const msg = els.paymentStatus.textContent;
+  assert.match(msg, /Not enough SOL on Devnet/i, msg);
+  assert.doesNotMatch(msg, /different network/i,
+    'the mismatch hint is only for a zero balance');
+});
+
 test('a full send reaches the explorer link and reports success', async () => {
   const { els, sandbox } = boot({
     search: '?tag=alice&to=' + VALID_ADDRESS,
@@ -313,7 +350,7 @@ test('a full send reaches the explorer link and reports success', async () => {
   assert.match(els.paymentStatus.deepText, /Payment sent/i);
   const link = els.paymentStatus.children.find((c) => c.href);
   assert.ok(link, 'an explorer link should be rendered');
-  assert.match(link.href, /explorer\.solana\.com.*cluster=testnet/);
+  assert.match(link.href, /explorer\.solana\.com.*cluster=devnet/);
   assert.equal(link.rel, 'noopener noreferrer', 'external links need rel=noopener');
   assert.equal(els.sendButton.disabled, false, 'button must be re-enabled');
   assert.equal(els.sendButton.getAttribute('aria-busy'), undefined,

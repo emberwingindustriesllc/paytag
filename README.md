@@ -73,6 +73,29 @@ var NETWORK = 'devnet'; // 'devnet' | 'testnet' | 'mainnet-beta'
 The on-screen network badge is written from that constant, so the badge can
 never contradict the cluster the app is actually using.
 
+### Testing on devnet (the default)
+
+Devnet is the right cluster for trying PayTag end to end. Testnet is a
+validator stress-test network — its faucet is unreliable and its tokens are not
+the ones wallets hand out, so a wallet funded on devnet will look empty to an
+app pointed at testnet.
+
+1. In Phantom: **Settings → Developer Settings → Testnet Mode → Solana Devnet**.
+   (Phantom labels the toggle "Testnet Mode", but the network list is where you
+   actually pick Devnet or Testnet.)
+2. Get free SOL from <https://faucet.solana.com/> — select **Devnet**, paste your
+   address, request an airdrop.
+3. Confirm the balance on devnet before opening PayTag:
+
+   ```bash
+   curl -s https://api.devnet.solana.com -H 'Content-Type: application/json' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"getBalance","params":["YOUR_ADDRESS"]}'
+   ```
+
+The wallet and the app must be on the **same** cluster. A zero balance in
+PayTag while your wallet shows test SOL is the signature of a mismatch; the app
+now says so explicitly instead of just reporting "not enough SOL".
+
 **Before going to mainnet, read the checklist below.** Getting devnet and
 mainnet confused is the single most expensive mistake possible in this app.
 
