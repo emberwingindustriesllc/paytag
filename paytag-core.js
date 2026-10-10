@@ -23,6 +23,8 @@
   /* Query-parameter names used in a shareable PayTag link. */
   var PARAM_HANDLE = 'tag';
   var PARAM_ADDRESS = 'to';
+  var PARAM_AMOUNT = 'amount';
+  var PARAM_TOKEN = 'token';
 
   /* legacy aliases kept working so previously shared links do not break */
   var LEGACY = { handle: 'user', address: 'wallet' };
@@ -39,6 +41,79 @@
     devnet: 'https://explorer.solana.com/?cluster=devnet',
     testnet: 'https://explorer.solana.com/?cluster=testnet'
   };
+
+  /*
+   * Supported tokens.
+   *
+   * USDC here is the SPL token Circle issues natively ON SOLANA — not an
+   * Ethereum asset and not a bridge. Everything stays on one chain. Each
+   * cluster has its own mint, so the mint must be selected by cluster; a
+   * mainnet mint referenced on devnet simply does not exist.
+   *
+   * Decimals matter: SOL has 9, USDC has 6. Getting that wrong is a 1000x
+   * error in the amount, so the value is data, not a magic number.
+   */
+  var TOKENS = {
+    SOL: {
+      symbol: 'SOL',
+      name: 'Solana',
+      decimals: 9,
+      native: true,
+      mints: {}
+    },
+    USDC: {
+      symbol: 'USDC',
+      name: 'USD Coin',
+      decimals: 6,
+      native: false,
+      mints: {
+        'mainnet-beta': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+        devnet: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      }
+    }
+  };
+
+  /** The token record for a symbol, or null. Case-insensitive. */
+  function tokenInfo(symbol) {
+    var key = String(symbol || '').trim().toUpperCase();
+    return TOKENS[key] || null;
+  }
+
+  /** Mint address for a token on a cluster, or '' when unsupported there. */
+  function tokenMint(symbol, network) {
+    var t = tokenInfo(symbol);
+    if (!t || t.native) return '';
+    return t.mints[network] || '';
+  }
+
+  /**
+   * Amount (human units) -> base units for a token, or null when unusable.
+   * Uses string maths on the decimal expansion so 0.1 USDC never becomes
+   * 0.09999999 through floating point.
+   */
+  function baseUnitsFromAmount(amount, decimals) {
+    var n = typeof amount === 'number' ? String(amount) : String(amount || '').trim();
+    if (!n || !/^\d*\.?\d*$/.test(n)) return null;
+    var parts = n.split('.');
+    var whole = parts[0] || '0';
+    var frac = (parts[1] || '').slice(0, decimals);
+    while (frac.length < decimals) frac += '0';
+    var digits = (whole + frac).replace(/^0+/, '');
+    if (!digits) return null;
+    var value = Number(digits);
+    if (!isFinite(value) || value <= 0) return null;
+    return value;
+  }
+
+  /** base units -> human string, trimmed of trailing zeros. */
+  function amountFromBaseUnits(units, decimals) {
+    var n = typeof units === 'number' ? units : parseFloat(units);
+    if (!isFinite(n) || n < 0) return '0';
+    var s = n.toFixed(0).padStart(decimals + 1, '0');
+    var whole = s.slice(0, s.length - decimals) || '0';
+    var frac = s.slice(s.length - decimals).replace(/0+$/, '');
+    return frac ? whole + '.' + frac : whole;
+  }
 
   // ── handles ───────────────────────────────────────────────────────────────
 
@@ -98,6 +173,19 @@
     return (n / LAMPORTS_PER_SOL).toFixed(9).replace(/0+$/, '').replace(/\.$/, '');
   }
 
+  /**
+   * Normalise an amount that arrived in a link, or was typed by a user.
+   *
+   * Returns a plain decimal string ('4', '0.25') or '' when the value is
+   * absent or unusable. Callers must treat '' as "no amount requested" — the
+   * point is that a malformed amount can never reach the send path as NaN.
+   */
+  function normalizeAmount(value) {
+    if (value === null || value === undefined || value === '') return '';
+    var lamports = lamportsFromSol(value);
+    return lamports === null ? '' : solFromLamports(lamports);
+  }
+
   // ── addresses ─────────────────────────────────────────────────────────────
 
   /**
@@ -135,7 +223,9 @@
       var params = new URLSearchParams(search || '');
       return validatePayTagParts(
         params.get(PARAM_HANDLE) || params.get(LEGACY.handle),
-        params.get(PARAM_ADDRESS) || params.get(LEGACY.address)
+        params.get(PARAM_ADDRESS) || params.get(LEGACY.address),
+        params.get(PARAM_AMOUNT),
+        params.get(PARAM_TOKEN)
       );
     } catch (e) {
       return { ok: false, reason: 'That PayTag link could not be read.' };
@@ -151,13 +241,26 @@
    * still accepted on read (see parsePayTagFromLocation) for anyone who
    * shares it.
    */
-  function buildShareUrl(origin, handle, address) {
+  function buildShareUrl(origin, handle, address, amount, token) {
     var h = normalizeHandle(handle);
     var a = String(address || '').trim();
+    var amt = normalizeAmount(amount);
+    var tok = normalizeTokenSymbol(token);
     var base = String(origin || '').replace(/\/+$/, '');
     var qs = PARAM_ADDRESS + '=' + encodeURIComponent(a);
     if (h) qs = PARAM_HANDLE + '=' + encodeURIComponent(h) + '&' + qs;
+    // Amount and token are appended only when present, so a plain link keeps
+    // its original byte-for-byte form.
+    if (amt) qs += '&' + PARAM_AMOUNT + '=' + encodeURIComponent(amt);
+    if (tok) qs += '&' + PARAM_TOKEN + '=' + encodeURIComponent(tok);
     return base + '/?' + qs;
+  }
+
+  /** Canonical token symbol, or '' for the default (SOL). */
+  function normalizeTokenSymbol(symbol) {
+    var t = tokenInfo(symbol);
+    if (!t) return '';
+    return t.symbol === 'SOL' ? '' : t.symbol;
   }
 
   /**
@@ -190,12 +293,15 @@
       }
     }
 
-    return validatePayTagParts(handle, address);
+    return validatePayTagParts(handle, address, params.get(PARAM_AMOUNT),
+      params.get(PARAM_TOKEN));
   }
 
-  function validatePayTagParts(rawHandle, rawAddress) {
+  function validatePayTagParts(rawHandle, rawAddress, rawAmount, rawToken) {
     var handle = normalizeHandle(rawHandle);
     var address = typeof rawAddress === 'string' ? rawAddress.trim() : '';
+    var amount = normalizeAmount(rawAmount);
+    var token = normalizeTokenSymbol(rawToken) || 'SOL';
 
     if (!handle && !address) return { ok: false, reason: 'empty' };
     if (!address) {
@@ -204,7 +310,37 @@
     if (!looksLikeAddress(address)) {
       return { ok: false, reason: 'This PayTag link has an invalid Solana address.' };
     }
-    return { ok: true, handle: handle, address: address };
+    // A bad amount or token is DROPPED rather than fatal: the link is still
+    // payable, and the payer simply gets to choose. Anything else would turn a
+    // typo in an optional parameter into an unusable link.
+    return { ok: true, handle: handle, address: address, amount: amount, token: token };
+  }
+
+  /**
+   * Build a Solana Pay transfer-request URI (the `solana:` scheme).
+   *
+   * This is the wallet-native path: a wallet that has registered the scheme
+   * opens with the recipient and amount already filled in, so paying is one
+   * tap instead of a web page plus a hand-typed amount. The web page remains
+   * the fallback for anyone whose browser has no handler — which is the whole
+   * reason PayTag still exists alongside the standard.
+   *
+   * Returns '' when the address is unusable, so callers can fall back cleanly.
+   */
+  function buildSolanaPayUrl(address, amount, label, token, network) {
+    var a = typeof address === 'string' ? address.trim() : '';
+    if (!looksLikeAddress(a)) return '';
+    var parts = [];
+    var amt = normalizeAmount(amount);
+    if (amt) parts.push('amount=' + encodeURIComponent(amt));
+    // SPL tokens are identified by MINT in the standard, not by symbol, and the
+    // mint differs per cluster — so a USDC request on devnet must carry the
+    // devnet mint or the wallet will look for a token that does not exist.
+    var mint = tokenMint(token, network);
+    if (mint) parts.push('spl-token=' + encodeURIComponent(mint));
+    var lbl = normalizeHandle(label);
+    if (lbl) parts.push('label=' + encodeURIComponent('@' + lbl));
+    return 'solana:' + a + (parts.length ? '?' + parts.join('&') : '');
   }
 
   /** Explorer link for a transaction signature on the given cluster. */
@@ -235,6 +371,14 @@
     LAMPORTS_PER_SOL: LAMPORTS_PER_SOL,
     PARAM_HANDLE: PARAM_HANDLE,
     PARAM_ADDRESS: PARAM_ADDRESS,
+    PARAM_AMOUNT: PARAM_AMOUNT,
+    PARAM_TOKEN: PARAM_TOKEN,
+    TOKENS: TOKENS,
+    tokenInfo: tokenInfo,
+    tokenMint: tokenMint,
+    normalizeTokenSymbol: normalizeTokenSymbol,
+    baseUnitsFromAmount: baseUnitsFromAmount,
+    amountFromBaseUnits: amountFromBaseUnits,
     HANDLE_MIN: HANDLE_MIN,
     HANDLE_MAX: HANDLE_MAX,
     normalizeHandle: normalizeHandle,
@@ -242,11 +386,13 @@
     isValidHandle: isValidHandle,
     lamportsFromSol: lamportsFromSol,
     solFromLamports: solFromLamports,
+    normalizeAmount: normalizeAmount,
     looksLikeAddress: looksLikeAddress,
     truncateAddress: truncateAddress,
     parsePayTag: parsePayTag,
     parsePayTagFromLocation: parsePayTagFromLocation,
     buildShareUrl: buildShareUrl,
+    buildSolanaPayUrl: buildSolanaPayUrl,
     explorerTxUrl: explorerTxUrl,
     explorerAddressUrl: explorerAddressUrl,
     networkLabel: networkLabel,

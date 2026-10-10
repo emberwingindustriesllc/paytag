@@ -76,12 +76,40 @@
       </div>
       <p class="handle-hint" id="handleHint">Letters, numbers, - and _.</p>
 
+      <div class="request-amount">
+        <label for="requestAmount">Request an amount <span class="muted">(optional)</span></label>
+        <div class="request-amount__row">
+          <input
+            id="requestAmount"
+            type="number"
+            inputmode="decimal"
+            min="0"
+            step="any"
+            placeholder="leave blank to let them choose"
+          >
+          <select id="tokenSelect" aria-label="Token">
+            <option value="sol">SOL</option>
+            <option value="usdc">USDC</option>
+          </select>
+        </div>
+        <p class="handle-hint" id="amountHint">Set an amount and the link asks for it, so the payer never types it.</p>
+      </div>
+
       <button id="saveButton" class="primary-button">Create PayTag</button>
 
       <div id="paytagResult" class="hidden result">
         <p>Your PayTag <strong id="paytagHandle"></strong></p>
         <div id="paytagUrl" class="paytag-url"></div>
         <button id="copyButton" class="secondary-button">Copy link</button>
+        <button id="qrButton" class="secondary-button" aria-expanded="false" aria-controls="qrPanel">
+          Show QR code
+        </button>
+        <div id="qrPanel" class="qr-panel hidden">
+          <div id="qrTarget" class="qr-target"></div>
+          <p class="muted">
+            Scan with a phone camera to pay — or to open the link in Phantom.
+          </p>
+        </div>
       </div>
     </section>
 
@@ -96,32 +124,66 @@
         <a id="recipientAddress" class="mono" href="#" target="_blank" rel="noopener noreferrer"></a>
       </p>
 
+      <!-- Shown only when the link names an amount: the payer should never
+           have to retype what the sender already asked for. -->
+      <div id="requestedAmount" class="requested hidden">
+        <span class="requested__label">Requested</span>
+        <strong id="requestedAmountValue" class="requested__value"></strong>
+        <span id="requestedTokenLabel" class="requested__token"></span>
+      </div>
+
+      <!-- A wallet-aware link: opens the payer's wallet with everything filled
+           in. Hidden when no handler is detectable. -->
+      <a id="openWalletLink" class="primary-button wallet-link hidden" href="#">
+        Open in wallet
+      </a>
+      <p id="walletHint" class="handle-hint hidden"></p>
+
       <button id="paymentConnectButton" class="primary-button">
         Connect Wallet to Pay
       </button>
 
       <div id="paymentForm" class="hidden">
         <div class="amount-buttons" role="group" aria-label="Preset amounts">
-          <button class="amount-button" data-amount="0.01" aria-pressed="false">0.01 SOL</button>
-          <button class="amount-button" data-amount="0.05" aria-pressed="false">0.05 SOL</button>
-          <button class="amount-button" data-amount="0.1"  aria-pressed="false">0.10 SOL</button>
+          <button class="amount-button" data-amount="0.01" aria-pressed="false">0.01</button>
+          <button class="amount-button" data-amount="0.05" aria-pressed="false">0.05</button>
+          <button class="amount-button" data-amount="0.1"  aria-pressed="false">0.10</button>
         </div>
 
         <div class="custom-amount">
-          <label for="customAmount">Custom amount</label>
+          <label for="customAmount"><span id="amountUnitLabel">Amount (SOL)</span></label>
           <input
             id="customAmount"
             type="number"
             inputmode="decimal"
             min="0.000000001"
-            step="0.001"
+            step="any"
             placeholder="0.00"
           >
         </div>
 
-        <button id="sendButton" class="primary-button">Send SOL</button>
+        <button id="sendButton" class="primary-button">Send</button>
 
         <p id="paymentStatus" class="status" role="status" aria-live="polite"></p>
+      </div>
+
+      <!-- No wallet at all: be honest about it and give the shortest real
+           path. PayTag cannot conjure funds — receiving requires a wallet. -->
+      <div id="noWalletHelp" class="no-wallet hidden">
+        <h3>You need a Solana wallet to pay</h3>
+        <p class="muted">
+          A wallet is what actually holds and sends the money — PayTag never
+          touches your funds. It takes about a minute to set up:
+        </p>
+        <ol class="no-wallet__steps">
+          <li>Install <strong>Phantom</strong> (browser extension on a computer,
+              or the app on a phone).</li>
+          <li>Open this link <em>inside</em> Phantom if you are on a phone —
+              a normal mobile browser cannot see your wallet.</li>
+          <li>Add a little SOL, or USDC if this link asks for it, then come back
+              and tap "Connect Wallet to Pay".</li>
+        </ol>
+        <p class="muted" id="noWalletAddress"></p>
       </div>
     </section>
 
@@ -132,6 +194,8 @@
   </main>
 
   <script src="paytag-core.js"></script>
+  <script src="qr-data.js"></script>
+  <script src="qr.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

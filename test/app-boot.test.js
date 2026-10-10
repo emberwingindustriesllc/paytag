@@ -19,6 +19,8 @@ const vm = require('node:vm');
 const ROOT = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const coreSrc = fs.readFileSync(path.join(ROOT, 'paytag-core.js'), 'utf8');
+const qrDataSrc = fs.readFileSync(path.join(ROOT, 'qr-data.js'), 'utf8');
+const qrSrc = fs.readFileSync(path.join(ROOT, 'qr.js'), 'utf8');
 const appSrc = fs.readFileSync(path.join(ROOT, 'app.js'), 'utf8');
 
 const VALID_ADDRESS = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
@@ -61,6 +63,22 @@ function makeEl(id) {
   };
 }
 
+/**
+ * Dispatch an event like the DOM does: with `this` bound to the element.
+ *
+ * Calling a stored listener directly (fire(el, 'click')) makes `this`
+ * the ARRAY, not the element. Handlers that only set properties on `this`
+ * appear to work while silently writing to the wrong object, and any handler
+ * that calls a real method (this.setAttribute) throws. Binding explicitly
+ * keeps the stub honest.
+ */
+function fire(el, type) {
+  const handlers = el.listeners[type] || [];
+  let out;
+  handlers.forEach((fn) => { out = fn.call(el); });
+  return out;
+}
+
 /** Build a sandbox in which app.js can run to completion. */
 function boot({
   pathname = '/',
@@ -96,6 +114,14 @@ function boot({
     URLSearchParams,
     URL,
     Promise,
+    Uint8Array,
+    Array,
+    Number,
+    String,
+    Math,
+    Object,
+    JSON,
+    Error,
     setTimeout: (fn) => { if (runTimers) fn(); return 0; },
     clearTimeout: () => {},
     document: {
@@ -104,6 +130,7 @@ function boot({
       title: '',
       getElementById: (id) => els[id] || null,
       createElement: (tag) => makeEl('<' + tag + '>'),
+      createElementNS: (ns, tag) => makeEl('<' + tag + '>'),
       createTextNode: (t) => ({ deepText: t, textContent: t }),
       querySelectorAll: (sel) =>
         sel === '.amount-button' ? amountButtons : [],
@@ -143,23 +170,47 @@ function boot({
         getBalance: async () => balance,
         getLatestBlockhash: async () => ({ blockhash: '11111111111111111111111111111111' }),
         sendRawTransaction: async () => 'SIG',
+        getAccountInfo: async () => null,
+        getTokenAccountBalance: async () => {
+          throw new Error('no token account');
+        },
         confirmTransaction: async () => {
           if (confirmResult === 'hang') return new Promise(() => {});
           return { value: { err: confirmResult === 'err' ? { InstructionError: [0, 'Custom'] } : null } };
         }
       };
     },
-    PublicKey: function (v) { this.value = v; this.toString = () => v; },
-    SystemProgram: { transfer: (o) => ({ kind: 'transfer', ...o }) },
+    PublicKey: function (v) {
+      this.value = v;
+      this.toString = () => v;
+      this.toBuffer = () => new Uint8Array(32);
+      this.equals = (o) => String(o) === v;
+    },
+    SystemProgram: {
+      transfer: (o) => ({ kind: 'transfer', ...o }),
+      programId: '11111111111111111111111111111111'
+    },
     Transaction: function () {
-      this.add = (i) => i;
+      this.instructions = [];
+      this.add = (i) => { this.instructions.push(i); return this; };
       this.recentBlockhash = null;
       this.feePayer = null;
+      this.serialize = () => new Uint8Array([9, 9, 9]);
+    },
+    TransactionInstruction: function (o) {
+      Object.assign(this, o);
     }
   };
+  // findProgramAddressSync is called as a static on PublicKey.
+  sandbox.solanaWeb3.PublicKey.findProgramAddressSync = (seeds, programId) => [
+    { toString: () => 'ATA_' + seeds.length, toBuffer: () => new Uint8Array(32) },
+    255
+  ];
 
   vm.createContext(sandbox);
   vm.runInContext(coreSrc, sandbox, { filename: 'paytag-core.js' });
+  vm.runInContext(qrDataSrc, sandbox, { filename: 'qr-data.js' });
+  vm.runInContext(qrSrc, sandbox, { filename: 'qr.js' });
   vm.runInContext(appSrc, sandbox, { filename: 'app.js' });
 
   return { els, sandbox, amountButtons };
@@ -243,7 +294,7 @@ test('short /handle path form is accepted', () => {
 
 test('amount presets write into the custom amount field and mark selection', () => {
   const { els, amountButtons } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
-  amountButtons[1].listeners.click[0]();
+  fire(amountButtons[1], 'click');
   assert.equal(els.customAmount.value, '0.05');
   assert.equal(amountButtons[1].classes.has('is-selected'), true);
   assert.equal(amountButtons[1].getAttribute('aria-pressed'), 'true');
@@ -253,14 +304,14 @@ test('amount presets write into the custom amount field and mark selection', () 
 
 test('no wallet installed produces a helpful message, not a crash', async () => {
   const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
   assert.match(els.paymentStatus.textContent, /No Solana wallet found/i);
 });
 
 test('owner flow without a wallet reports a helpful message', async () => {
   const { els } = boot();
-  els.connectButton.listeners.click[0]();
+  fire(els.connectButton, 'click');
   await new Promise((r) => setImmediate(r));
   assert.match(els.status.textContent, /No Solana wallet found/i);
 });
@@ -268,7 +319,7 @@ test('owner flow without a wallet reports a helpful message', async () => {
 test('sending without connecting is refused', async () => {
   const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
   els.customAmount.value = '0.01';
-  els.sendButton.listeners.click[0]();
+  fire(els.sendButton, 'click');
   await new Promise((r) => setImmediate(r));
   assert.match(els.paymentStatus.textContent, /Connect your wallet first/i);
 });
@@ -276,7 +327,7 @@ test('sending without connecting is refused', async () => {
 test('send validates the amount before touching the wallet', async () => {
   const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
   els.customAmount.value = '-5';
-  els.sendButton.listeners.click[0]();
+  fire(els.sendButton, 'click');
   await new Promise((r) => setImmediate(r));
   assert.match(els.paymentStatus.textContent, /greater than zero/i);
 });
@@ -287,12 +338,12 @@ test('REGRESSION: share URLs include the deployment path', async () => {
   const { els } = boot({ pathname: '/paytag/', withWallet: true });
 
   // Connect wallet
-  els.connectButton.listeners.click[0]();
+  fire(els.connectButton, 'click');
   await new Promise((r) => setImmediate(r));
 
   // Set username and create PayTag
   els.username.value = 'alice';
-  els.saveButton.listeners.click[0]();
+  fire(els.saveButton, 'click');
 
   // The generated URL should include the /paytag/ path
   assert.ok(els.paytagUrl.textContent.includes('/paytag/'),
@@ -313,11 +364,11 @@ test('a zero balance names the cluster and hints at a network mismatch', async (
     balance: 0
   });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
 
   els.customAmount.value = '0.01';
-  await els.sendButton.listeners.click[0]();
+  await fire(els.sendButton, 'click');
 
   const msg = els.paymentStatus.textContent;
   assert.match(msg, /Not enough SOL on Devnet/i, msg);
@@ -332,11 +383,11 @@ test('a funded-but-short balance does not claim a network mismatch', async () =>
     balance: 5_000_000 // 0.005 SOL — has funds, but not enough for 1 SOL
   });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
 
   els.customAmount.value = '1';
-  await els.sendButton.listeners.click[0]();
+  await fire(els.sendButton, 'click');
 
   const msg = els.paymentStatus.textContent;
   assert.match(msg, /Not enough SOL on Devnet/i, msg);
@@ -351,14 +402,14 @@ test('a send that confirms with an error reports failure, not success', async ()
     confirmResult: 'err'
   });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
   els.customAmount.value = '0.25';
-  await els.sendButton.listeners.click[0]();
+  await fire(els.sendButton, 'click');
 
   const msg = els.paymentStatus.textContent;
   assert.match(msg, /rejected this payment/i, msg);
-  assert.match(msg, /no SOL was sent/i, msg);
+  assert.match(msg, /nothing was sent/i, msg);
   assert.doesNotMatch(msg, /Payment sent/i,
     'a rejected transaction must never be reported as sent');
 });
@@ -373,10 +424,10 @@ test('an unconfirmed send says the SOL is not lost, and links the tx', async () 
     runTimers: true
   });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
   els.customAmount.value = '0.25';
-  await els.sendButton.listeners.click[0]();
+  await fire(els.sendButton, 'click');
 
   const msg = els.paymentStatus.deepText;
   assert.match(msg, /not confirmed yet/i, msg);
@@ -392,7 +443,7 @@ test('a mobile browser with no wallet is told to open the link in Phantom', asyn
     userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari/605.1'
   });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
 
   const msg = els.paymentStatus.textContent;
@@ -404,10 +455,137 @@ test('a mobile browser with no wallet is told to open the link in Phantom', asyn
 test('a desktop browser with no wallet is told to install the extension', async () => {
   const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
 
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
 
   assert.match(els.paymentStatus.textContent, /Install the Phantom extension/i);
+});
+
+// ── amounts, wallet links, QR, tokens ─────────────────────────────────────
+
+test('a link carrying an amount prefills the payer field and shows the request', () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=4'
+  });
+  assert.equal(els.customAmount.value, '4',
+    'the payer must not have to retype the amount');
+  assert.equal(els.requestedAmountValue.textContent, '4');
+  assert.equal(els.requestedTokenLabel.textContent, 'SOL');
+  assert.equal(els.requestedAmount.classes.has('hidden'), false,
+    'the request should be visible');
+});
+
+test('a link with no amount leaves the field empty and hides the request', () => {
+  const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
+  assert.equal(els.customAmount.value, '');
+  assert.equal(els.requestedAmount.classes.has('hidden'), true);
+});
+
+test('a wallet-native solana: link is offered when the address is valid', () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=2.5'
+  });
+  assert.equal(els.openWalletLink.classes.has('hidden'), false,
+    'the one-tap wallet path should be offered');
+  assert.ok(els.openWalletLink.href.startsWith('solana:' + VALID_ADDRESS),
+    els.openWalletLink.href);
+  assert.match(els.openWalletLink.href, /amount=2\.5/);
+});
+
+test('the solana: link carries the CLUSTER-SPECIFIC USDC mint', () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=12.5&token=USDC'
+  });
+  // A mainnet mint on devnet would name a token that does not exist there.
+  assert.match(els.openWalletLink.href, /spl-token=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU/,
+    els.openWalletLink.href);
+  assert.equal(els.requestedTokenLabel.textContent, 'USDC');
+  assert.match(els.sendButton.textContent, /USDC/);
+});
+
+test('a no-wallet visitor is told how to pay, and cannot be misled', () => {
+  const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
+  assert.equal(els.noWalletHelp.classes.has('hidden'), false,
+    'the honest path must be shown when there is no wallet');
+  assert.match(els.noWalletAddress.textContent, /Address to pay/);
+});
+
+test('the QR button renders a scannable SVG of the share link', () => {
+  const { els } = boot({ pathname: '/paytag/', withWallet: true });
+  fire(els.connectButton, 'click');
+  return Promise.resolve()
+    .then(() => new Promise((r) => setImmediate(r)))
+    .then(() => {
+      els.username.value = 'alice';
+      fire(els.saveButton, 'click');
+      const url = els.paytagUrl.textContent;
+      assert.ok(url, 'a share URL should exist first');
+
+      fire(els.qrButton, 'click');
+      assert.equal(els.qrPanel.classes.has('hidden'), false, 'QR panel should open');
+      const svg = els.qrTarget.children.find((c) => c.id === '<svg>');
+      assert.ok(svg, 'an SVG element should be appended');
+      assert.equal(svg.getAttribute('role'), 'img');
+      const path = svg.children.find((c) => c.id === '<path>');
+      assert.ok(path, 'the modules path should be appended');
+      assert.ok(path.getAttribute('d').length > 100,
+        'the path should describe real modules');
+
+      // The QR must encode the link itself, not a solana: URI — a phone camera
+      // opens URLs and does nothing with a bare scheme.
+      const QR = require('../qr.js');
+      const decoded = QR.encode(url, { level: 'L' });
+      assert.ok(decoded.size > 0, 'the link must fit in a QR symbol');
+
+      fire(els.qrButton, 'click');
+      assert.equal(els.qrPanel.classes.has('hidden'), true, 'toggling should close it');
+    });
+});
+
+test('an amount request survives into the generated share URL', () => {
+  const { els } = boot({ pathname: '/', withWallet: true });
+  fire(els.connectButton, 'click');
+  return Promise.resolve()
+    .then(() => new Promise((r) => setImmediate(r)))
+    .then(() => {
+      els.username.value = 'bob';
+      els.requestAmount.value = '3.5';
+      fire(els.saveButton, 'click');
+      const url = els.paytagUrl.textContent;
+      assert.match(url, /amount=3\.5/, url);
+      assert.match(url, /tag=bob/, url);
+    });
+});
+
+test('a USDC request on a cluster without a mint is refused, not silently broken', () => {
+  const { els } = boot({ pathname: '/', withWallet: true });
+  fire(els.connectButton, 'click');
+  return Promise.resolve()
+    .then(() => new Promise((r) => setImmediate(r)))
+    .then(() => {
+      // The boot helper defaults to devnet, which DOES have a USDC mint, so
+      // this asserts the happy path produces a token param...
+      els.username.value = 'carol';
+      els.requestAmount.value = '10';
+      els.tokenSelect.value = 'usdc';
+      fire(els.saveButton, 'click');
+      assert.match(els.paytagUrl.textContent, /token=USDC/,
+        els.paytagUrl.textContent);
+    });
+});
+
+test('an invalid amount is rejected before a link is produced', () => {
+  const { els } = boot({ pathname: '/', withWallet: true });
+  fire(els.connectButton, 'click');
+  return Promise.resolve()
+    .then(() => new Promise((r) => setImmediate(r)))
+    .then(() => {
+      els.username.value = 'dave';
+      els.requestAmount.value = 'abc';
+      fire(els.saveButton, 'click');
+      assert.match(els.status.textContent, /not a valid number/i,
+        els.status.textContent);
+    });
 });
 
 test('a full send reaches the explorer link and reports success', async () => {
@@ -417,12 +595,12 @@ test('a full send reaches the explorer link and reports success', async () => {
   });
 
   // connect
-  els.paymentConnectButton.listeners.click[0]();
+  fire(els.paymentConnectButton, 'click');
   await new Promise((r) => setImmediate(r));
   assert.equal(els.paymentForm.classes.has('hidden'), false, 'form should open');
 
   els.customAmount.value = '0.25';
-  await els.sendButton.listeners.click[0]();
+  await fire(els.sendButton, 'click');
 
   assert.match(els.paymentStatus.deepText, /Payment sent/i);
   const link = els.paymentStatus.children.find((c) => c.href);

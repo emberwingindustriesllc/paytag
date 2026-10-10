@@ -366,6 +366,127 @@ input:focus-visible {
   color: var(--text);
 }
 
+/* ── request amount (owner side) ──────────────────────────────────────── */
+
+.request-amount {
+  margin-top: 22px;
+}
+
+.request-amount label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.request-amount label .muted {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.request-amount__row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.request-amount__row input,
+.request-amount__row select {
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  font-size: 16px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.request-amount__row select {
+  cursor: pointer;
+}
+
+/* ── requested amount (payer side) ────────────────────────────────────── */
+
+.requested {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 16px 0 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.requested__label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+
+.requested__value {
+  font-size: 22px;
+}
+
+.requested__token {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* The wallet-aware link is an <a>, so it needs button-like box behaviour. */
+.wallet-link {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+/* ── QR panel ─────────────────────────────────────────────────────────── */
+
+.qr-panel {
+  margin-top: 16px;
+  text-align: center;
+}
+
+.qr-target {
+  display: inline-block;
+  padding: 10px;
+  border-radius: 12px;
+  background: #ffffff;
+  line-height: 0;
+}
+
+.qr-target svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ── no-wallet help ───────────────────────────────────────────────────── */
+
+.no-wallet {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.no-wallet h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.no-wallet__steps {
+  margin: 12px 0;
+  padding-left: 20px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.no-wallet__steps li {
+  margin-bottom: 6px;
+}
+
 /* ── misc ─────────────────────────────────────────────────────────────── */
 
 /* Disabled buttons need to look disabled — a click on an unchanged-looking

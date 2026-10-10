@@ -39,7 +39,7 @@ jobs:
       - name: Stage site
         run: |
           mkdir -p _site
-          cp index.html style.css app.js paytag-core.js \
+          cp index.html style.css app.js paytag-core.js qr.js qr-data.js \
              favicon.svg manifest.webmanifest 404.html _site/
           echo "staged:"
           ls -1 _site

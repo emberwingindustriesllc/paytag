@@ -60,6 +60,14 @@
   var PublicKey = window.solanaWeb3.PublicKey;
   var SystemProgram = window.solanaWeb3.SystemProgram;
   var Transaction = window.solanaWeb3.Transaction;
+  var TransactionInstruction = window.solanaWeb3.TransactionInstruction;
+
+  // SPL programs. These IDs are fixed protocol constants, not configuration.
+  var TOKEN_PROGRAM_ID = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  var ASSOCIATED_TOKEN_PROGRAM_ID = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
+  // SPL Token instruction discriminators (u8 prefix on the instruction data).
+  var IX_TRANSFER_CHECKED = 12;
+  var IX_ATA_CREATE_IDEMPOTENT = 1;
 
   var connection = new Connection(RPC[NETWORK] || RPC.devnet, 'confirmed');
 
@@ -154,8 +162,14 @@
     return !!(t && core.looksLikeAddress(t.address) && core.isValidHandle(t.handle));
   }
 
-  function saveTag(handle, address) {
-    var entry = { handle: handle, address: address, savedAt: Date.now() };
+  function saveTag(handle, address, amount, token) {
+    var entry = {
+      handle: handle,
+      address: address,
+      amount: core.normalizeAmount(amount),
+      token: core.normalizeTokenSymbol(token),
+      savedAt: Date.now()
+    };
     savedTags = [entry].concat(savedTags.filter(function (t) {
       return t.handle !== handle;
     })).slice(0, 5);
@@ -185,13 +199,20 @@
 
       var link = document.createElement('a');
       link.className = 'saved-tag__link';
-      link.href = core.buildShareUrl(window.location.origin + window.location.pathname, tag.handle, tag.address);
+      link.href = core.buildShareUrl(
+        window.location.origin + window.location.pathname,
+        tag.handle, tag.address, tag.amount, tag.token
+      );
       // textContent, never innerHTML — handles come from user input
       link.textContent = '@' + tag.handle;
 
       var addr = document.createElement('span');
       addr.className = 'saved-tag__addr';
-      addr.textContent = core.truncateAddress(tag.address);
+      var label = core.truncateAddress(tag.address);
+      if (tag.amount) {
+        label = tag.amount + ' ' + (tag.token || 'SOL') + ' · ' + label;
+      }
+      addr.textContent = label;
 
       row.appendChild(link);
       row.appendChild(addr);
@@ -242,6 +263,109 @@
   /** True when running on a phone/tablet, where wallets do not inject. */
   function isMobile() {
     return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  }
+
+  // ── SPL token plumbing (USDC and friends) ─────────────────────────────────
+
+  /**
+   * The Associated Token Account for (owner, mint).
+   *
+   * An SPL token is never held directly by a wallet — it lives in a token
+   * account whose address is derived, not chosen. Same seeds every wallet
+   * uses, so both sides agree on the address without any coordination.
+   */
+  function deriveAta(ownerKey, mintKey) {
+    var tokenProgram = new PublicKey(TOKEN_PROGRAM_ID);
+    var ataProgram = new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID);
+    var found = PublicKey.findProgramAddressSync(
+      [ownerKey.toBuffer(), tokenProgram.toBuffer(), mintKey.toBuffer()],
+      ataProgram
+    );
+    return found[0];
+  }
+
+  /** Associated Token Account program: CreateIdempotent. */
+  function createAtaInstruction(funder, ata, owner, mint) {
+    return new TransactionInstruction({
+      programId: new PublicKey(ASSOCIATED_TOKEN_PROGRAM_ID),
+      keys: [
+        { pubkey: funder, isSigner: true, isWritable: true },
+        { pubkey: ata, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: false, isWritable: false },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: new PublicKey(TOKEN_PROGRAM_ID), isSigner: false, isWritable: false }
+      ],
+      data: Uint8Array.from([IX_ATA_CREATE_IDEMPOTENT])
+    });
+  }
+
+  /**
+   * SPL Token program: TransferChecked.
+   *
+   * The Checked variant is used deliberately: it passes the mint and decimals
+   * so the program itself rejects a decimals mismatch. Plain Transfer (3) does
+   * not, and a wrong decimals value silently moves 1000x the intended amount.
+   */
+  function transferCheckedInstruction(source, mint, destination, owner, amount, decimals) {
+    var data = new Uint8Array(10);
+    data[0] = IX_TRANSFER_CHECKED;
+    // u64 little-endian. Amounts here are well under 2^53 so plain division is
+    // exact; the byte loop avoids relying on BigInt for one field.
+    var remaining = amount;
+    for (var i = 0; i < 8; i++) {
+      data[1 + i] = remaining & 0xff;
+      remaining = Math.floor(remaining / 256);
+    }
+    data[9] = decimals;
+    return new TransactionInstruction({
+      programId: new PublicKey(TOKEN_PROGRAM_ID),
+      keys: [
+        { pubkey: source, isSigner: false, isWritable: true },
+        { pubkey: mint, isSigner: false, isWritable: false },
+        { pubkey: destination, isSigner: false, isWritable: true },
+        { pubkey: owner, isSigner: true, isWritable: false }
+      ],
+      data: data
+    });
+  }
+
+  /** Live SPL balance for (owner, mint), in base units. 0 when no account. */
+  async function getTokenBalance(ownerKey, mintKey) {
+    try {
+      var res = await connection.getTokenAccountBalance(deriveAta(ownerKey, mintKey));
+      return Number(res.value.amount);
+    } catch (e) {
+      // No token account yet is the normal "zero balance" case.
+      return 0;
+    }
+  }
+
+  /** True when an account exists on the current cluster. */
+  async function accountExists(pubkey) {
+    try {
+      var info = await connection.getAccountInfo(pubkey);
+      return !!(info && info.data);
+    } catch (e) {
+      // If we cannot tell, assume it exists: skipping the create instruction
+      // fails loudly if we are wrong, whereas adding it unnecessarily makes
+      // the payer fund rent the recipient does not need.
+      return true;
+    }
+  }
+
+  /**
+   * Insufficient-balance message that names the cluster and, at a zero
+   * balance, points at the likely cause — a wallet on a different network.
+   */
+  function insufficientMessage(balance, unit) {
+    var msg = 'Not enough ' + unit + ' on ' + core.networkLabel(NETWORK) +
+      '. You have ' + core.solFromLamports(balance) + ' ' + unit + ' available.';
+    if (balance === 0) {
+      msg += ' Your wallet may be on a different network — switch it to ' +
+        core.networkLabel(NETWORK) + ' and reload.';
+    }
+    return msg;
   }
 
   /**
@@ -330,16 +454,60 @@
         return;
       }
 
-      var address = ownerKey.toString();
-      var url = core.buildShareUrl(window.location.origin + window.location.pathname, handle, address);
+      var token = $('tokenSelect').value === 'usdc' ? 'USDC' : 'SOL';
+      var amountInput = $('requestAmount').value;
+      var amount = core.normalizeAmount(amountInput);
 
-      saveTag(handle, address);
+      if (String(amountInput).trim() && !amount) {
+        setStatus(status, 'That amount is not a valid number.', 'error');
+        $('requestAmount').focus();
+        return;
+      }
+      if (token === 'USDC' && !core.tokenMint('USDC', NETWORK)) {
+        setStatus(
+          status,
+          'USDC is not available on ' + core.networkLabel(NETWORK) +
+            ' — this app is on ' + core.networkLabel(NETWORK) +
+            ', which has no USDC mint. Use SOL, or switch the app to mainnet.',
+          'error'
+        );
+        return;
+      }
+
+      var address = ownerKey.toString();
+      var url = core.buildShareUrl(
+        window.location.origin + window.location.pathname,
+        handle, address, amount, token
+      );
+
+      saveTag(handle, address, amount, token);
 
       $('paytagUrl').textContent = url;
       $('paytagHandle').textContent = '@' + handle;
       show($('paytagResult'), true);
+      hideQr();
       setStatus(status, 'PayTag ready.', 'ok');
     });
+
+    var requestInput = $('requestAmount');
+    if (requestInput) {
+      requestInput.addEventListener('input', function () {
+        var hint = $('amountHint');
+        if (!hint) return;
+        var v = core.normalizeAmount(requestInput.value);
+        var unit = $('tokenSelect').value === 'usdc' ? 'USDC' : 'SOL';
+        hint.textContent = v
+          ? 'The link will ask for ' + v + ' ' + unit + '.'
+          : 'Set an amount and the link asks for it, so the payer never types it.';
+        hint.className = 'handle-hint';
+      });
+    }
+    var tokenSel = $('tokenSelect');
+    if (tokenSel) {
+      tokenSel.addEventListener('change', function () {
+        if (requestInput) requestInput.dispatchEvent(new Event('input'));
+      });
+    }
 
     $('copyButton').addEventListener('click', async function () {
       var btn = this;
@@ -358,7 +526,43 @@
       }
     });
 
+    $('qrButton').addEventListener('click', function () {
+      var panel = $('qrPanel');
+      var btn = this;
+      if (!panel.classList.contains('hidden')) {
+        hideQr();
+        return;
+      }
+      var target = $('qrTarget');
+      var url = $('paytagUrl').textContent;
+      if (!target || !url) return;
+      // The QR encodes the share LINK, not a solana: URI — a phone camera
+      // opens a URL but does nothing with a bare scheme, and the link also
+      // carries the handle and amount for whoever scans it.
+      target.textContent = '';
+      try {
+        target.appendChild(window.QR.toDom(document, url, { scale: 4, border: 4 }));
+      } catch (e) {
+        console.error(e);
+        setStatus($('status'), 'Could not draw the QR code: ' + e.message, 'error');
+        return;
+      }
+      show(panel, true);
+      btn.textContent = 'Hide QR code';
+      btn.setAttribute('aria-expanded', 'true');
+    });
+
     renderSavedTags();
+  }
+
+  function hideQr() {
+    var panel = $('qrPanel');
+    var btn = $('qrButton');
+    if (panel) show(panel, false);
+    if (btn) {
+      btn.textContent = 'Show QR code';
+      btn.setAttribute('aria-expanded', 'false');
+    }
   }
 
   // ── visitor flow: pay a PayTag ────────────────────────────────────────────
@@ -373,6 +577,47 @@
     var addrEl = $('recipientAddress');
     addrEl.textContent = core.truncateAddress(paytag.address);
     addrEl.href = core.explorerAddressUrl(paytag.address, NETWORK);
+
+    var token = paytag.token || 'SOL';
+    var unit = token === 'USDC' ? 'USDC' : 'SOL';
+
+    // A requested amount is the whole point of an amount-bearing link: show it
+    // and prefill the field so the payer never retypes it.
+    if (paytag.amount) {
+      $('requestedAmountValue').textContent = paytag.amount;
+      $('requestedTokenLabel').textContent = unit;
+      show($('requestedAmount'), true);
+      $('customAmount').value = paytag.amount;
+    }
+
+    var unitLabel = $('amountUnitLabel');
+    if (unitLabel) unitLabel.textContent = 'Amount (' + unit + ')';
+    var sendBtn = $('sendButton');
+    if (sendBtn) sendBtn.textContent = 'Send ' + unit;
+
+    // Wallet-native path: a solana: URI opens the wallet with everything filled
+    // in, which is one tap instead of a page plus a typed amount.
+    var uri = core.buildSolanaPayUrl(paytag.address, paytag.amount, paytag.handle, token, NETWORK);
+    var walletLink = $('openWalletLink');
+    if (uri && walletLink) {
+      walletLink.href = uri;
+      walletLink.textContent = 'Open in wallet' + (paytag.amount ? ' — ' + paytag.amount + ' ' + unit : '');
+      show(walletLink, true);
+      var hint = $('walletHint');
+      if (hint) {
+        hint.textContent = 'Opens Phantom (or another wallet) with the payment ready to approve.';
+        show(hint, true);
+      }
+    }
+
+    // No wallet detected: explain the real path instead of offering a button
+    // that cannot work. PayTag cannot create funds — only a wallet can hold and
+    // send them — so pretending otherwise would be a lie.
+    if (!getWallet()) {
+      show($('noWalletHelp'), true);
+      $('noWalletAddress').textContent =
+        'Address to pay: ' + paytag.address;
+    }
 
     $('paymentConnectButton').addEventListener('click', async function () {
       var status = $('paymentStatus');
@@ -397,6 +642,7 @@
         }
 
         btn.textContent = 'Wallet connected';
+        show($('noWalletHelp'), false);
         show($('paymentForm'), true);
         setStatus(status, '');
         $('customAmount').focus();
@@ -436,9 +682,13 @@
   async function sendPayment() {
     var status = $('paymentStatus');
     var btn = $('sendButton');
-    var lamports = core.lamportsFromSol($('customAmount').value);
+    var token = (paytag && paytag.token) || 'SOL';
+    var info = core.tokenInfo(token) || core.tokenInfo('SOL');
+    var unit = info.symbol;
+    var rawAmount = $('customAmount').value;
 
-    if (!lamports) {
+    var baseUnits = core.baseUnitsFromAmount(rawAmount, info.decimals);
+    if (!baseUnits) {
       setStatus(status, 'Enter an amount greater than zero.', 'error');
       return;
     }
@@ -449,9 +699,11 @@
       return;
     }
 
+    var display = core.amountFromBaseUnits(baseUnits, info.decimals) + ' ' + unit;
+
     if (core.isLiveNetwork(NETWORK)) {
       var proceed = window.confirm(
-        'About to send ' + core.solFromLamports(lamports) + ' SOL on MAINNET to\n' +
+        'About to send ' + display + ' on MAINNET to\n' +
           paytag.address + '\n\nMainnet transactions cannot be reversed. Continue?'
       );
       if (!proceed) return;
@@ -462,35 +714,72 @@
     var originalLabel = btn.textContent;
 
     try {
-      setStatus(status, 'Checking balance…');
+      var transaction = new Transaction();
 
-      var balance = await connection.getBalance(payerKey);
-      if (lamports + FEE_BUFFER_LAMPORTS > balance) {
-        // A zero balance on the configured cluster almost always means the
-        // wallet is pointed at a DIFFERENT cluster than this app, not that the
-        // user is actually out of SOL. Say so, or the message is a dead end.
-        var hint = balance === 0
-          ? ' Your wallet may be on a different network — switch it to ' +
-            core.networkLabel(NETWORK) + ' and reload.'
-          : '';
-        setStatus(
-          status,
-          'Not enough SOL on ' + core.networkLabel(NETWORK) + '. You have ' +
-            core.solFromLamports(balance) + ' SOL available.' + hint,
-          'error'
+      if (info.native) {
+        setStatus(status, 'Checking balance…');
+        var balance = await connection.getBalance(payerKey);
+        if (baseUnits + FEE_BUFFER_LAMPORTS > balance) {
+          setStatus(status, insufficientMessage(balance, 'SOL'), 'error');
+          return;
+        }
+        transaction.add(
+          SystemProgram.transfer({
+            fromPubkey: payerKey,
+            toPubkey: new PublicKey(paytag.address),
+            lamports: baseUnits
+          })
         );
-        return;
+      } else {
+        // SPL path: the token lives in a derived account, and the recipient may
+        // not have one yet. Creating it costs a little rent that the SENDER
+        // pays and cannot recover, so it is only added when it is missing —
+        // never unconditionally.
+        var mintAddress = core.tokenMint(info.symbol, NETWORK);
+        if (!mintAddress) {
+          setStatus(
+            status,
+            unit + ' is not available on ' + core.networkLabel(NETWORK) + '.',
+            'error'
+          );
+          return;
+        }
+        var mintKey = new PublicKey(mintAddress);
+        var recipientKey = new PublicKey(paytag.address);
+
+        setStatus(status, 'Checking balance…');
+        var tokenBalance = await getTokenBalance(payerKey, mintKey);
+        if (baseUnits > tokenBalance) {
+          setStatus(
+            status,
+            'Not enough ' + unit + ' on ' + core.networkLabel(NETWORK) +
+              '. You have ' + core.amountFromBaseUnits(tokenBalance, info.decimals) +
+              ' ' + unit + ' available.' +
+              (tokenBalance === 0
+                ? ' Your wallet may be on a different network, or may not hold ' +
+                  unit + ' yet.'
+                : ''),
+            'error'
+          );
+          return;
+        }
+
+        setStatus(status, 'Preparing transaction…');
+        var sourceAta = deriveAta(payerKey, mintKey);
+        var destAta = deriveAta(recipientKey, mintKey);
+
+        var destExists = await accountExists(destAta);
+        if (!destExists) {
+          transaction.add(
+            createAtaInstruction(payerKey, destAta, recipientKey, mintKey)
+          );
+        }
+        transaction.add(
+          transferCheckedInstruction(
+            sourceAta, mintKey, destAta, payerKey, baseUnits, info.decimals
+          )
+        );
       }
-
-      setStatus(status, 'Preparing transaction…');
-
-      var transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: payerKey,
-          toPubkey: new PublicKey(paytag.address),
-          lamports: lamports
-        })
-      );
 
       // web3.js 1.98.x still uses these property assignments.
       var latest = await connection.getLatestBlockhash();
@@ -516,11 +805,11 @@
       var outcome = await confirmWithTimeout(signature, CONFIRM_TIMEOUT_MS);
 
       if (outcome === 'confirmed') {
-        renderStatus(status, 'Payment sent — ' + core.solFromLamports(lamports) + ' SOL.', explorer);
+        renderStatus(status, 'Payment sent — ' + display + '.', explorer);
       } else if (outcome === 'failed') {
         setStatus(
           status,
-          'The network rejected this payment, so no SOL was sent. Check the ' +
+          'The network rejected this payment, so nothing was sent. Check the ' +
             'details, then try again.',
           'error'
         );
@@ -528,8 +817,8 @@
         renderStatus(
           status,
           'Sent, but not confirmed yet. This usually just means the network is ' +
-            'slow — your SOL has NOT been lost. Check the transaction before ' +
-            'retrying:',
+            'slow — your ' + unit + ' has NOT been lost. Check the transaction ' +
+            'before retrying:',
           explorer
         );
       }
@@ -615,6 +904,12 @@
     } else if (result.reason !== 'empty') {
       initInvalidLink(result.reason);
     } else {
+      // Owner view. The payer-only blocks live inside paymentSection and are
+      // hidden with it, but hide them explicitly too so nothing can leak if a
+      // future change shows that section for another reason.
+      show($('requestedAmount'), false);
+      show($('noWalletHelp'), false);
+      show($('openWalletLink'), false);
       initOwner();
     }
   }

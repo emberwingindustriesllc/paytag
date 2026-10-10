@@ -22,7 +22,7 @@
   "scripts": {
     "start": "node scripts/serve.js",
     "dev": "node scripts/serve.js",
-    "test": "node --test test/core.test.js test/app-boot.test.js",
+    "test": "node --test test/core.test.js test/qr.test.js test/app-boot.test.js",
     "lint": "node scripts/lint.js",
     "check": "npm run lint && npm test"
   },

@@ -22,3 +22,5 @@ secrets.json
 # build/test output
 coverage/
 *.tgz
+# local commit-message scratch
+COMMIT_MSG*.txt
