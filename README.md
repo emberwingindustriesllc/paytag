@@ -62,6 +62,22 @@ scripts/lint.js       structural + XSS + id-wiring checks
 `paytag-core.js` has no DOM and no wallet dependency, which is what lets the
 real logic be unit tested while the app still ships with no build step.
 
+## Mobile wallets
+
+On a phone, no browser injects a Solana wallet — not Safari, not Chrome. The
+wallet lives in the **Phantom app**, so a PayTag link has to be opened *inside*
+Phantom's built-in browser or nothing will happen when you tap "Connect Wallet
+to Pay".
+
+- **iOS/Android:** tap the ⋯ / share menu → **Open in Phantom**, or copy the link
+  and paste it into the browser inside the Phantom app.
+- PayTag detects a phone and says this explicitly instead of telling you to
+  "install the Phantom extension", which is the wrong advice there.
+- Balances on a test cluster only appear in Phantom when **Testnet Mode** is on
+  and the matching network (Devnet) is selected. A payment can land correctly
+  and still be invisible if the wallet is showing a different cluster — always
+  confirm on the explorer link the app gives you.
+
 ## Switching networks
 
 The cluster lives in one place, at the top of `app.js`:

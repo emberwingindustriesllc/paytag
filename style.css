@@ -368,6 +368,13 @@ input:focus-visible {
 
 /* ── misc ─────────────────────────────────────────────────────────────── */
 
+/* Disabled buttons need to look disabled — a click on an unchanged-looking
+   button reads as "the button does nothing". */
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .hidden {
   display: none !important;
 }

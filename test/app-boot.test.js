@@ -62,7 +62,15 @@ function makeEl(id) {
 }
 
 /** Build a sandbox in which app.js can run to completion. */
-function boot({ pathname = '/', search = '', withWallet = false, balance = 5_000_000_000 } = {}) {
+function boot({
+  pathname = '/',
+  search = '',
+  withWallet = false,
+  balance = 5_000_000_000,
+  userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  confirmResult = 'ok',   // 'ok' | 'err' | 'hang'
+  runTimers = false       // when true, setTimeout fires immediately
+} = {}) {
   // Seed the element map from the real markup so id wiring is genuinely
   // tested, INCLUDING each element's starting class list (so "starts hidden"
   // is a real assertion rather than an artefact of the stub).
@@ -88,7 +96,7 @@ function boot({ pathname = '/', search = '', withWallet = false, balance = 5_000
     URLSearchParams,
     URL,
     Promise,
-    setTimeout: () => 0,
+    setTimeout: (fn) => { if (runTimers) fn(); return 0; },
     clearTimeout: () => {},
     document: {
       readyState: 'complete',
@@ -101,7 +109,7 @@ function boot({ pathname = '/', search = '', withWallet = false, balance = 5_000
         sel === '.amount-button' ? amountButtons : [],
       addEventListener: () => {}
     },
-    navigator: {},
+    navigator: { userAgent },
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = v; },
@@ -135,7 +143,10 @@ function boot({ pathname = '/', search = '', withWallet = false, balance = 5_000
         getBalance: async () => balance,
         getLatestBlockhash: async () => ({ blockhash: '11111111111111111111111111111111' }),
         sendRawTransaction: async () => 'SIG',
-        confirmTransaction: async () => ({ value: { err: null } })
+        confirmTransaction: async () => {
+          if (confirmResult === 'hang') return new Promise(() => {});
+          return { value: { err: confirmResult === 'err' ? { InstructionError: [0, 'Custom'] } : null } };
+        }
       };
     },
     PublicKey: function (v) { this.value = v; this.toString = () => v; },
@@ -331,6 +342,72 @@ test('a funded-but-short balance does not claim a network mismatch', async () =>
   assert.match(msg, /Not enough SOL on Devnet/i, msg);
   assert.doesNotMatch(msg, /different network/i,
     'the mismatch hint is only for a zero balance');
+});
+
+test('a send that confirms with an error reports failure, not success', async () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true,
+    confirmResult: 'err'
+  });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+  els.customAmount.value = '0.25';
+  await els.sendButton.listeners.click[0]();
+
+  const msg = els.paymentStatus.textContent;
+  assert.match(msg, /rejected this payment/i, msg);
+  assert.match(msg, /no SOL was sent/i, msg);
+  assert.doesNotMatch(msg, /Payment sent/i,
+    'a rejected transaction must never be reported as sent');
+});
+
+test('an unconfirmed send says the SOL is not lost, and links the tx', async () => {
+  // The devnet trap: the cluster is slow, the wait expires, but the money DID
+  // move. Reporting that as failure is what makes users think funds vanished.
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true,
+    confirmResult: 'hang',
+    runTimers: true
+  });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+  els.customAmount.value = '0.25';
+  await els.sendButton.listeners.click[0]();
+
+  const msg = els.paymentStatus.deepText;
+  assert.match(msg, /not confirmed yet/i, msg);
+  assert.match(msg, /NOT been lost/i, 'must reassure that funds are not gone');
+  assert.doesNotMatch(msg, /failed/i, 'an unknown outcome must not read as failure');
+  const link = els.paymentStatus.children.find((c) => c.href);
+  assert.ok(link, 'the explorer link must still be offered');
+});
+
+test('a mobile browser with no wallet is told to open the link in Phantom', async () => {
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari/605.1'
+  });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+
+  const msg = els.paymentStatus.textContent;
+  assert.match(msg, /Open in Phantom|inside Phantom/i, msg);
+  assert.doesNotMatch(msg, /Install the Phantom extension/i,
+    'desktop advice is wrong on a phone');
+});
+
+test('a desktop browser with no wallet is told to install the extension', async () => {
+  const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS });
+
+  els.paymentConnectButton.listeners.click[0]();
+  await new Promise((r) => setImmediate(r));
+
+  assert.match(els.paymentStatus.textContent, /Install the Phantom extension/i);
 });
 
 test('a full send reaches the explorer link and reports success', async () => {

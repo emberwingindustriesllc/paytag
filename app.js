@@ -33,7 +33,10 @@
   };
 
   var STORAGE_KEY = 'paytag.savedTags.v1';
-  var CONFIRM_TIMEOUT_MS = 45000;
+  // Devnet is not a production-grade cluster and regularly takes far longer
+  // than mainnet to finalise a transaction. A 45s cap reported "not confirmed"
+  // for transactions that DID land, which reads as "your money vanished".
+  var CONFIRM_TIMEOUT_MS = 90000;
   var FEE_BUFFER_LAMPORTS = 10000;
 
   // ── dependencies ──────────────────────────────────────────────────────────
@@ -236,6 +239,28 @@
     }
   }
 
+  /** True when running on a phone/tablet, where wallets do not inject. */
+  function isMobile() {
+    return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+  }
+
+  /**
+   * Why there is no wallet, phrased for the device.
+   *
+   * On desktop the extension injects window.solana. On a phone no browser
+   * injects a wallet, so "install Phantom" is the wrong advice — the user
+   * almost certainly HAS Phantom; they just have to open the link inside it.
+   * Getting this wrong looks like the button silently doing nothing.
+   */
+  function noWalletMessage() {
+    if (isMobile()) {
+      return 'No wallet detected in this browser. On a phone you must open ' +
+        'this link inside Phantom: tap the ⋯ menu → "Open in Phantom", or ' +
+        'paste the link into Phantom\'s built-in browser.';
+    }
+    return 'No Solana wallet found. Install the Phantom extension, then reload.';
+  }
+
   // ── owner flow: create a PayTag ───────────────────────────────────────────
 
   function initOwner() {
@@ -270,7 +295,7 @@
       } catch (e) {
         btn.disabled = false;
         if (e && e.message === 'NO_WALLET') {
-          setStatus(status, 'No Solana wallet found. Install Phantom, then reload.', 'error');
+          setStatus(status, noWalletMessage(), 'error');
         } else if (e && /reject/i.test(String(e.message || ''))) {
           setStatus(status, 'Connection cancelled.');
         } else {
@@ -378,7 +403,7 @@
       } catch (e) {
         btn.disabled = false;
         if (e && e.message === 'NO_WALLET') {
-          setStatus(status, 'No Solana wallet found. Install Phantom, then reload.', 'error');
+          setStatus(status, noWalletMessage(), 'error');
         } else if (e && /reject/i.test(String(e.message || ''))) {
           setStatus(status, 'Connection cancelled.');
         } else {
@@ -485,14 +510,28 @@
 
       setStatus(status, 'Waiting for confirmation…');
 
-      // Bounded wait: if it does not confirm in time we still hand back the
-      // signature and an explorer link rather than hanging forever.
-      var confirmed = await confirmWithTimeout(signature, CONFIRM_TIMEOUT_MS);
+      // Bounded wait. If it has not confirmed in time we say so plainly and
+      // hand back the signature + explorer link — never "failed", because we
+      // do not actually know that, and the transfer may well have landed.
+      var outcome = await confirmWithTimeout(signature, CONFIRM_TIMEOUT_MS);
 
-      if (confirmed) {
+      if (outcome === 'confirmed') {
         renderStatus(status, 'Payment sent — ' + core.solFromLamports(lamports) + ' SOL.', explorer);
+      } else if (outcome === 'failed') {
+        setStatus(
+          status,
+          'The network rejected this payment, so no SOL was sent. Check the ' +
+            'details, then try again.',
+          'error'
+        );
       } else {
-        renderStatus(status, 'Submitted, not confirmed yet. It may still land —', explorer);
+        renderStatus(
+          status,
+          'Sent, but not confirmed yet. This usually just means the network is ' +
+            'slow — your SOL has NOT been lost. Check the transaction before ' +
+            'retrying:',
+          explorer
+        );
       }
     } catch (e) {
       console.error(e);
@@ -509,12 +548,21 @@
     }
   }
 
-  /** Promise.race between confirmation and a timeout. Never rejects. */
+  /**
+   * Promise.race between confirmation and a timeout. Never rejects.
+   *
+   * Three outcomes, not two:
+   *   'confirmed'    the cluster confirmed it
+   *   'failed'       the cluster confirmed it with an error
+   *   'unconfirmed'  the wait ran out, or the confirmation call errored, so we
+   *                  genuinely do not know. Callers must not treat this as a
+   *                  failure — the transaction may still land.
+   */
   function confirmWithTimeout(signature, ms) {
     var timeoutId;
     var timeoutPromise = new Promise(function (resolve) {
       timeoutId = window.setTimeout(function () {
-        resolve(false);
+        resolve('unconfirmed');
       }, ms);
     });
     return Promise.race([
@@ -522,11 +570,12 @@
         .confirmTransaction(signature, 'confirmed')
         .then(function (res) {
           window.clearTimeout(timeoutId);
-          return !!(res && res.value && res.value.err === null);
+          if (!res || !res.value) return 'unconfirmed';
+          return res.value.err ? 'failed' : 'confirmed';
         })
         .catch(function () {
           window.clearTimeout(timeoutId);
-          return false;
+          return 'unconfirmed';
         }),
       timeoutPromise
     ]);
