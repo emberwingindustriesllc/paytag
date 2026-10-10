@@ -75,7 +75,8 @@
 
   var ownerKey = null;   // connected wallet creating a PayTag
   var payerKey = null;   // connected wallet paying someone
-  var paytag = null;     // { handle, address } when visiting a PayTag
+  var paytag = null;     // { handle, address, amount, token } when visiting one
+  var ownerShare = null; // the PayTag this user just created (owner view)
   var savedTags = loadSavedTags();
 
   // ── small helpers ─────────────────────────────────────────────────────────
@@ -405,6 +406,71 @@
       '?ref=' + encodeURIComponent(ref || '');
   }
 
+  /**
+   * Draw a QR into a container, as real DOM (never innerHTML).
+   * Returns true on success. Clears the container first either way.
+   */
+  function renderQr(container, text) {
+    if (!container) return false;
+    container.textContent = '';
+    if (!text) return false;
+    try {
+      container.appendChild(window.QR.toDom(document, text, { scale: 4, border: 4 }));
+      return true;
+    } catch (e) {
+      console.error(e);
+      return false;
+    }
+  }
+
+  /**
+   * The `solana:` URI QR — the one-tap path for wallet apps.
+   *
+   * A QR is the only way to get this scheme to a wallet that understands it.
+   * A wallet's own scanner parses the URI natively and opens the payment with
+   * the recipient, amount and token already filled in, so the payer approves
+   * rather than connecting a page and retyping figures. A plain camera cannot
+   * resolve the scheme, which is why the panel says to use the wallet's
+   * scanner and why this is not the default tab.
+   *
+   * Works on both sides of the app: `paytag` is set when VISITING someone's
+   * link, `ownerShare` when you have just created your own.
+   *
+   * Returns '' when the URI cannot be built.
+   */
+  function walletQrUri() {
+    var src = paytag || ownerShare;
+    if (!src) return '';
+    return core.buildSolanaPayUrl(
+      src.address, src.amount, src.handle,
+      src.token || 'SOL', NETWORK
+    );
+  }
+
+  function showQrTab(which) {
+    var isLink = which === 'link';
+    var linkPanel = $('qrTargetLink');
+    var walletPanel = $('qrTargetWallet');
+    show(linkPanel, isLink);
+    show(walletPanel, !isLink);
+    var linkTab = $('qrTabLink');
+    var walletTab = $('qrTabWallet');
+    if (linkTab) {
+      linkTab.classList.toggle('is-active', isLink);
+      linkTab.setAttribute('aria-selected', isLink ? 'true' : 'false');
+    }
+    if (walletTab) {
+      walletTab.classList.toggle('is-active', !isLink);
+      walletTab.setAttribute('aria-selected', isLink ? 'false' : 'true');
+    }
+    var caption = $('qrCaption');
+    if (caption) {
+      caption.textContent = isLink
+        ? 'Scan with any phone camera to open the payment page.'
+        : 'Scan from inside your wallet app (Phantom → scan icon) to pay in one tap.';
+    }
+  }
+
   // ── owner flow: create a PayTag ───────────────────────────────────────────
 
   function initOwner() {
@@ -501,6 +567,7 @@
       );
 
       saveTag(handle, address, amount, token);
+      ownerShare = { handle: handle, address: address, amount: amount, token: token };
 
       $('paytagUrl').textContent = url;
       $('paytagHandle').textContent = '@' + handle;
@@ -553,24 +620,32 @@
         hideQr();
         return;
       }
-      var target = $('qrTarget');
+
       var url = $('paytagUrl').textContent;
-      if (!target || !url) return;
-      // The QR encodes the share LINK, not a solana: URI — a phone camera
-      // opens a URL but does nothing with a bare scheme, and the link also
-      // carries the handle and amount for whoever scans it.
-      target.textContent = '';
-      try {
-        target.appendChild(window.QR.toDom(document, url, { scale: 4, border: 4 }));
-      } catch (e) {
-        console.error(e);
-        setStatus($('status'), 'Could not draw the QR code: ' + e.message, 'error');
-        return;
-      }
+      if (!url) return;
+
+      // Tab 1: the share LINK. Encoded as the link, not the solana: URI, so a
+      // plain phone camera can open it — and it carries the handle and amount
+      // for whoever lands on the page.
+      renderQr($('qrTargetLink'), url);
+
+      // Tab 2: the solana: URI, for a wallet's OWN scanner. Same payment,
+      // one tap, nothing to type.
+      var walletUri = walletQrUri();
+      var walletTab = $('qrTabWallet');
+      var rendered = renderQr($('qrTargetWallet'), walletUri);
+      if (walletTab) show(walletTab, rendered);
+
+      showQrTab('link');
       show(panel, true);
       btn.textContent = 'Hide QR code';
       btn.setAttribute('aria-expanded', 'true');
     });
+
+    var qrTabLink = $('qrTabLink');
+    if (qrTabLink) qrTabLink.addEventListener('click', function () { showQrTab('link'); });
+    var qrTabWallet = $('qrTabWallet');
+    if (qrTabWallet) qrTabWallet.addEventListener('click', function () { showQrTab('wallet'); });
 
     renderSavedTags();
   }
@@ -645,13 +720,26 @@
       if (hint) show(hint, false);
     }
 
-    // No wallet detected: explain the real path instead of offering a button
-    // that cannot work. PayTag cannot create funds — only a wallet can hold and
-    // send them — so pretending otherwise would be a lie.
+    // No wallet detected: the honest path, made as short as it can be. A
+    // wallet is still required — only it can hold and send funds — but the
+    // solana: URI QR removes the connect-and-retype steps entirely, because a
+    // wallet's own scanner understands the scheme natively.
     if (!getWallet()) {
       show($('noWalletHelp'), true);
-      $('noWalletAddress').textContent =
-        'Address to pay: ' + paytag.address;
+      var uri = core.buildSolanaPayUrl(
+        paytag.address, paytag.amount, paytag.handle, token, NETWORK
+      );
+      var drawn = renderQr($('payerQr'), uri);
+      var qrWrap = $('payerQr');
+      if (qrWrap && !drawn) show(qrWrap, false);
+
+      var amountLine = $('payerQrAmount');
+      if (amountLine) {
+        amountLine.textContent = paytag.amount
+          ? 'This code asks for ' + paytag.amount + ' ' + unit + '.'
+          : 'You choose the amount in your wallet.';
+      }
+      $('noWalletAddress').textContent = 'Address to pay: ' + paytag.address;
     }
 
     $('paymentConnectButton').addEventListener('click', async function () {

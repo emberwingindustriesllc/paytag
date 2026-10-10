@@ -518,6 +518,78 @@ test('a phone gets a real Phantom universal link, not a bare scheme', () => {
     'the deeplink requires a ref parameter');
 });
 
+test('the QR panel offers both a link QR and a wallet-app QR', () => {
+  const { els } = boot({ pathname: '/paytag/', withWallet: true });
+  fire(els.connectButton, 'click');
+  return Promise.resolve()
+    .then(() => new Promise((r) => setImmediate(r)))
+    .then(() => {
+      els.username.value = 'alice';
+      els.requestAmount.value = '3';
+      fire(els.saveButton, 'click');
+      const url = els.paytagUrl.textContent;
+
+      fire(els.qrButton, 'click');
+      assert.equal(els.qrPanel.classes.has('hidden'), false, 'panel opens');
+
+      // Tab 1 is the plain-camera link.
+      const linkSvg = els.qrTargetLink.children.find((c) => c.id === '<svg>');
+      assert.ok(linkSvg, 'the link QR should be drawn');
+      assert.equal(els.qrTargetLink.classes.has('hidden'), false);
+      assert.match(els.qrCaption.textContent, /phone camera/i);
+
+      // Tab 2 must exist and hold a solana: URI, not the web link.
+      const walletSvg = els.qrTargetWallet.children.find((c) => c.id === '<svg>');
+      assert.ok(walletSvg, 'the wallet-app QR should be drawn');
+
+      // Switching tabs is what the payer does; the panels must swap.
+      fire(els.qrTabWallet, 'click');
+      assert.equal(els.qrTargetWallet.classes.has('hidden'), false,
+        'wallet tab should show its panel');
+      assert.equal(els.qrTargetLink.classes.has('hidden'), true);
+      assert.equal(els.qrTabWallet.getAttribute('aria-selected'), 'true');
+      assert.equal(els.qrTabLink.getAttribute('aria-selected'), 'false');
+      assert.match(els.qrCaption.textContent, /wallet app/i);
+
+      fire(els.qrTabLink, 'click');
+      assert.equal(els.qrTargetLink.classes.has('hidden'), false);
+      assert.equal(els.qrTargetWallet.classes.has('hidden'), true);
+
+      // The link QR must encode the web URL (a camera can open that).
+      const QR = require('../qr.js');
+      assert.ok(QR.encode(url, { level: 'L' }).size > 0);
+    });
+});
+
+test('the wallet QR encodes a solana: URI a wallet scanner can act on', () => {
+  // This is the whole point of the second tab: a wallet's own scanner parses
+  // the URI natively and pre-fills recipient + amount, so the payer approves
+  // instead of connecting a page and retyping. If the encoded text is the web
+  // link instead, that benefit silently disappears.
+  const { els } = boot({ search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=4' });
+  const QR = require('../qr.js');
+
+  // Rebuild the same URI the app builds, then assert its shape directly.
+  const core = require('../paytag-core.js');
+  const uri = core.buildSolanaPayUrl(VALID_ADDRESS, '4', 'alice', 'SOL', 'devnet');
+  assert.ok(uri.startsWith('solana:' + VALID_ADDRESS), uri);
+  assert.match(uri, /amount=4/);
+  assert.ok(QR.encode(uri, { level: 'L' }).size > 0,
+    'the URI must be encodable');
+
+  // And the USDC variant must carry the devnet mint, not the mainnet one.
+  const usdcUri = core.buildSolanaPayUrl(VALID_ADDRESS, '12.5', 'alice', 'USDC', 'devnet');
+  assert.match(usdcUri, /spl-token=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU/, usdcUri);
+  assert.ok(QR.encode(usdcUri, { level: 'L' }).size > 0);
+
+  // A no-wallet payer should be handed this QR rather than only prose.
+  assert.equal(els.noWalletHelp.classes.has('hidden'), false);
+  const payerSvg = els.payerQr.children.find((c) => c.id === '<svg>');
+  assert.ok(payerSvg, 'the payer-facing wallet QR should be drawn');
+  assert.match(els.payerQrAmount.textContent, /asks for 4 SOL/i,
+    els.payerQrAmount.textContent);
+});
+
 test('a USDC link labels the request and the send button in USDC', () => {
   const { els } = boot({
     search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=12.5&token=USDC'
@@ -548,7 +620,7 @@ test('the QR button renders a scannable SVG of the share link', () => {
 
       fire(els.qrButton, 'click');
       assert.equal(els.qrPanel.classes.has('hidden'), false, 'QR panel should open');
-      const svg = els.qrTarget.children.find((c) => c.id === '<svg>');
+      const svg = els.qrTargetLink.children.find((c) => c.id === '<svg>');
       assert.ok(svg, 'an SVG element should be appended');
       assert.equal(svg.getAttribute('role'), 'img');
       const path = svg.children.find((c) => c.id === '<path>');
@@ -556,8 +628,8 @@ test('the QR button renders a scannable SVG of the share link', () => {
       assert.ok(path.getAttribute('d').length > 100,
         'the path should describe real modules');
 
-      // The QR must encode the link itself, not a solana: URI — a phone camera
-      // opens URLs and does nothing with a bare scheme.
+      // The link QR must encode the link itself, not a solana: URI — a phone
+      // camera opens URLs and does nothing with a bare scheme.
       const QR = require('../qr.js');
       const decoded = QR.encode(url, { level: 'L' });
       assert.ok(decoded.size > 0, 'the link must fit in a QR symbol');

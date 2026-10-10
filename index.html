@@ -105,10 +105,15 @@
           Show QR code
         </button>
         <div id="qrPanel" class="qr-panel hidden">
-          <div id="qrTarget" class="qr-target"></div>
-          <p class="muted">
-            Scan with a phone camera to pay — or to open the link in Phantom.
-          </p>
+          <div class="qr-tabs" role="tablist" aria-label="QR code type">
+            <button id="qrTabLink" class="qr-tab is-active" role="tab"
+                    aria-selected="true" aria-controls="qrTargetLink">Payment link</button>
+            <button id="qrTabWallet" class="qr-tab" role="tab"
+                    aria-selected="false" aria-controls="qrTargetWallet">In a wallet app</button>
+          </div>
+          <div id="qrTargetLink" class="qr-target" role="tabpanel"></div>
+          <div id="qrTargetWallet" class="qr-target hidden" role="tabpanel"></div>
+          <p class="muted" id="qrCaption"></p>
         </div>
       </div>
     </section>
@@ -167,22 +172,33 @@
         <p id="paymentStatus" class="status" role="status" aria-live="polite"></p>
       </div>
 
-      <!-- No wallet at all: be honest about it and give the shortest real
-           path. PayTag cannot conjure funds — receiving requires a wallet. -->
+      <!-- No wallet in this browser: the shortest real path. A wallet is what
+           holds and sends the money, so this cannot be skipped — but scanning
+           one QR with a wallet's own scanner gives a true one-tap payment,
+           which is the only way to skip the connect step entirely. -->
       <div id="noWalletHelp" class="no-wallet hidden">
-        <h3>You need a Solana wallet to pay</h3>
+        <h3>Pay from a wallet app</h3>
         <p class="muted">
-          A wallet is what actually holds and sends the money — PayTag never
-          touches your funds. It takes about a minute to set up:
+          Scan this with your <strong>wallet app's own scanner</strong> (Phantom
+          → the scan icon). It opens the payment with everything filled in.
         </p>
-        <ol class="no-wallet__steps">
-          <li>Install <strong>Phantom</strong> (browser extension on a computer,
-              or the app on a phone).</li>
-          <li>Open this link <em>inside</em> Phantom if you are on a phone —
-              a normal mobile browser cannot see your wallet.</li>
-          <li>Add a little SOL, or USDC if this link asks for it, then come back
-              and tap "Connect Wallet to Pay".</li>
-        </ol>
+        <div id="payerQr" class="qr-target"></div>
+        <p class="muted" id="payerQrAmount"></p>
+
+        <details class="no-wallet__alt">
+          <summary>No wallet installed at all?</summary>
+          <p class="muted">
+            A wallet is what actually holds and sends the money — PayTag never
+            touches your funds. It takes about a minute:
+          </p>
+          <ol class="no-wallet__steps">
+            <li>Install <strong>Phantom</strong> (browser extension on a
+                computer, or the app on a phone).</li>
+            <li>Add a little SOL, or USDC if this link asks for it.</li>
+            <li>Come back and scan the code above, or tap "Connect Wallet to
+                Pay".</li>
+          </ol>
+        </details>
         <p class="muted" id="noWalletAddress"></p>
       </div>
     </section>

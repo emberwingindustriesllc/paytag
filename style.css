@@ -462,6 +462,32 @@ input:focus-visible {
   text-align: center;
 }
 
+/* Two QRs, two audiences: a plain camera opens the link, a wallet's own
+   scanner understands the solana: URI. They are not interchangeable, so the
+   tabs have to make the difference visible rather than bury it in a caption. */
+.qr-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.qr-tab {
+  padding: 8px 14px;
+  font-size: 14px;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+}
+
+.qr-tab.is-active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
 .qr-target {
   display: inline-block;
   padding: 10px;
@@ -497,6 +523,22 @@ input:focus-visible {
 
 .no-wallet__steps li {
   margin-bottom: 6px;
+}
+
+.no-wallet__alt {
+  margin-top: 18px;
+  text-align: left;
+}
+
+.no-wallet__alt summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  padding: 6px 0;
+}
+
+.no-wallet__alt[open] summary {
+  margin-bottom: 8px;
 }
 
 /* ── misc ─────────────────────────────────────────────────────────────── */

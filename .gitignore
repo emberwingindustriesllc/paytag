@@ -24,3 +24,6 @@ coverage/
 *.tgz
 # local commit-message scratch
 COMMIT_MSG*.txt
+
+# local scratch
+scratch/
