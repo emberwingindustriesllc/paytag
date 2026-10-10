@@ -786,6 +786,25 @@
       transaction.recentBlockhash = latest.blockhash;
       transaction.feePayer = payerKey;
 
+      // Preflight with our OWN devnet RPC before handing anything to the
+      // wallet. Phantom's devnet simulator is known to report "transaction
+      // reverted during simulation" for transactions that are in fact fine
+      // (it uses the mainnet simulator against a devnet transaction), so
+      // trusting it alone produces false failures and a scary red warning.
+      // Simulating here means we either catch a REAL error with the program's
+      // own log line, or we can tell the user the transaction is valid.
+      setStatus(status, 'Checking the transaction…');
+      var preflight = await simulateSafely(transaction);
+      if (preflight && preflight.err) {
+        setStatus(
+          status,
+          'This payment would fail on-chain, so it was not sent: ' +
+            preflight.reason,
+          'error'
+        );
+        return;
+      }
+
       setStatus(status, 'Approve in your wallet…');
       var signed = await wallet.signTransaction(transaction);
 
@@ -838,9 +857,41 @@
   }
 
   /**
-   * Promise.race between confirmation and a timeout. Never rejects.
-   *
-   * Three outcomes, not two:
+   * Simulate a transaction with our own RPC and turn the result into a
+   * readable reason. Never throws.
+    *
+    * Why this exists: Phantom's simulator is unreliable on devnet — it reports
+    * "transaction reverted during simulation" for transactions that execute
+    * perfectly, because it simulates against the wrong cluster. A false failure
+    * there is indistinguishable from a real one in the UI, so the app checks
+    * for itself and can tell the user which it is.
+    */
+   async function simulateSafely(transaction) {
+     try {
+       var sim = await connection.simulateTransaction(transaction);
+       if (!sim || !sim.value || !sim.value.err) return { err: null };
+
+       // Surface the program's own error text when there is one — "custom
+       // program error: 0x1" is useless on its own.
+       var logs = sim.value.logs || [];
+       var detail = '';
+       for (var i = logs.length - 1; i >= 0; i--) {
+         if (/Error|failed|insufficient/i.test(logs[i])) { detail = logs[i]; break; }
+       }
+       return {
+         err: sim.value.err,
+         reason: detail || JSON.stringify(sim.value.err)
+       };
+     } catch (e) {
+       // A preflight we cannot run must NOT block a payment that might be fine.
+       return { err: null, skipped: true };
+     }
+   }
+
+   /**
+    * Promise.race between confirmation and a timeout. Never rejects.
+    *
+    * Three outcomes, not two:
    *   'confirmed'    the cluster confirmed it
    *   'failed'       the cluster confirmed it with an error
    *   'unconfirmed'  the wait ran out, or the confirmation call errored, so we

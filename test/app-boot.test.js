@@ -87,6 +87,8 @@ function boot({
   balance = 5_000_000_000,
   userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
   confirmResult = 'ok',   // 'ok' | 'err' | 'hang'
+  simulateError = null,   // non-null simulates a preflight failure
+  simulateLogs = [],
   runTimers = false       // when true, setTimeout fires immediately
 } = {}) {
   // Seed the element map from the real markup so id wiring is genuinely
@@ -171,6 +173,7 @@ function boot({
         getLatestBlockhash: async () => ({ blockhash: '11111111111111111111111111111111' }),
         sendRawTransaction: async () => 'SIG',
         getAccountInfo: async () => null,
+        simulateTransaction: async () => ({ value: { err: simulateError, logs: simulateLogs } }),
         getTokenAccountBalance: async () => {
           throw new Error('no token account');
         },
@@ -586,6 +589,63 @@ test('an invalid amount is rejected before a link is produced', () => {
       assert.match(els.status.textContent, /not a valid number/i,
         els.status.textContent);
     });
+});
+
+test('a preflight failure stops the send before the wallet is even asked', async () => {
+  // The preflight exists so a transaction that WOULD fail on-chain never
+  // reaches the wallet — and so a real program error is reported with the
+  // program's own message rather than an opaque wallet rejection.
+  const { els, sandbox } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true,
+    simulateError: { InstructionError: [1, { Custom: 1 }] },
+    simulateLogs: [
+      'Program TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA invoke [1]',
+      'Program log: Error: insufficient funds'
+    ]
+  });
+
+  let signed = 0;
+  sandbox.solana.signTransaction = async () => { signed++; return { serialize: () => new Uint8Array([1]) }; };
+
+  fire(els.paymentConnectButton, 'click');
+  await new Promise((r) => setImmediate(r));
+  els.customAmount.value = '0.25';
+  await fire(els.sendButton, 'click');
+
+  const msg = els.paymentStatus.textContent;
+  assert.match(msg, /would fail on-chain/i, msg);
+  assert.match(msg, /insufficient funds/i,
+    'the program\'s own error text should be surfaced');
+  assert.equal(signed, 0, 'the wallet must not be asked to sign a doomed transaction');
+});
+
+test('a preflight that cannot run does not block a payment', async () => {
+  // If our own RPC cannot simulate, that is our problem, not the user's — the
+  // send must proceed rather than being blocked by a broken check.
+  const { els, sandbox } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS,
+    withWallet: true
+  });
+  sandbox.solanaWeb3.Connection = function () {
+    return {
+      getBalance: async () => 5_000_000_000,
+      getLatestBlockhash: async () => ({ blockhash: '11111111111111111111111111111111' }),
+      sendRawTransaction: async () => 'SIG',
+      getAccountInfo: async () => null,
+      getTokenAccountBalance: async () => { throw new Error('none'); },
+      simulateTransaction: async () => { throw new Error('rpc down'); },
+      confirmTransaction: async () => ({ value: { err: null } })
+    };
+  };
+
+  fire(els.paymentConnectButton, 'click');
+  await new Promise((r) => setImmediate(r));
+  els.customAmount.value = '0.25';
+  await fire(els.sendButton, 'click');
+
+  assert.match(els.paymentStatus.deepText, /Payment sent/i,
+    'a failed preflight must not stop a send');
 });
 
 test('a full send reaches the explorer link and reports success', async () => {
