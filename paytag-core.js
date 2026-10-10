@@ -319,11 +319,16 @@
   /**
    * Build a Solana Pay transfer-request URI (the `solana:` scheme).
    *
-   * This is the wallet-native path: a wallet that has registered the scheme
-   * opens with the recipient and amount already filled in, so paying is one
-   * tap instead of a web page plus a hand-typed amount. The web page remains
-   * the fallback for anyone whose browser has no handler — which is the whole
-   * reason PayTag still exists alongside the standard.
+   * NOTE: the app does not currently use this. It was wired to an "Open in
+   * wallet" button, which did nothing: the Phantom browser extension registers
+   * no protocol handler for `solana:`, and no mobile browser resolves an
+   * unregistered scheme either — the failure class sRFC 25 documents. A button
+   * that silently does nothing is worse than no button, so it was removed.
+   *
+   * It is kept because it is the correct encoding of the standard and has a
+   * real use that has not been built yet: a QR of this URI can be scanned from
+   * INSIDE a wallet's own scanner, which does understand the scheme, giving a
+   * true one-tap path for wallet-app users.
    *
    * Returns '' when the address is unusable, so callers can fall back cleanly.
    */

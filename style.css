@@ -435,12 +435,24 @@ input:focus-visible {
   font-weight: 600;
 }
 
-/* The wallet-aware link is an <a>, so it needs button-like box behaviour. */
+/* The wallet-aware link is an <a>, so it must borrow the button look
+   explicitly: border-radius, font and cursor live on the `button` element
+   selector, which an anchor does not match. Without this it renders as a
+   square, differently-fonted box with no pointer cursor and reads as dead. */
 .wallet-link {
   display: block;
   text-align: center;
   text-decoration: none;
   box-sizing: border-box;
+  cursor: pointer;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.wallet-link:hover {
+  opacity: 0.9;
 }
 
 /* ── QR panel ─────────────────────────────────────────────────────────── */

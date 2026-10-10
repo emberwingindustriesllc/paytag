@@ -385,6 +385,26 @@
     return 'No Solana wallet found. Install the Phantom extension, then reload.';
   }
 
+  /**
+   * Build a Phantom `browse` deeplink for the current page.
+   *
+   * This is the documented way to get a link into the Phantom app on a phone,
+   * and it is the ONLY form that helps here. Phantom exposes no transfer
+   * deeplink — the supported "other methods" are just `browse` — so there is
+   * no way to hand Phantom a pre-filled payment. What we CAN do is open this
+   * very PayTag page inside Phantom's in-app browser, where the wallet IS
+   * injected, so "Connect Wallet to Pay" then works normally.
+   *
+   * A bare `solana:` URI is deliberately not used: no mobile browser resolves
+   * an unregistered scheme, and the Phantom desktop extension registers no
+   * handler either, so it silently does nothing in both places.
+   */
+  function buildPhantomBrowseLink(pageUrl, ref) {
+    if (!pageUrl) return '';
+    return 'https://phantom.com/ul/browse/' + encodeURIComponent(pageUrl) +
+      '?ref=' + encodeURIComponent(ref || '');
+  }
+
   // ── owner flow: create a PayTag ───────────────────────────────────────────
 
   function initOwner() {
@@ -595,19 +615,34 @@
     var sendBtn = $('sendButton');
     if (sendBtn) sendBtn.textContent = 'Send ' + unit;
 
-    // Wallet-native path: a solana: URI opens the wallet with everything filled
-    // in, which is one tap instead of a page plus a typed amount.
-    var uri = core.buildSolanaPayUrl(paytag.address, paytag.amount, paytag.handle, token, NETWORK);
+    // Mobile handoff, MOBILE ONLY.
+    //
+    // On a phone the wallet lives in the Phantom app, so the useful action is
+    // to reopen this page inside Phantom's in-app browser, where the provider
+    // IS injected and the normal connect flow works. Phantom exposes no
+    // transfer deeplink, so a pre-filled payment cannot be handed over — the
+    // browse deeplink is the documented mechanism and it is what we use.
+    //
+    // On desktop this is not offered at all: the extension is already injected
+    // into the page, so there is nothing to hand off, and a scheme-based link
+    // would silently do nothing.
     var walletLink = $('openWalletLink');
-    if (uri && walletLink) {
-      walletLink.href = uri;
-      walletLink.textContent = 'Open in wallet' + (paytag.amount ? ' — ' + paytag.amount + ' ' + unit : '');
+    var hint = $('walletHint');
+    var browseLink = isMobile()
+      ? buildPhantomBrowseLink(window.location.href, window.location.origin)
+      : '';
+    if (browseLink && walletLink) {
+      walletLink.href = browseLink;
+      walletLink.textContent = 'Open in Phantom';
       show(walletLink, true);
-      var hint = $('walletHint');
       if (hint) {
-        hint.textContent = 'Opens Phantom (or another wallet) with the payment ready to approve.';
+        hint.textContent =
+          'Opens this page inside Phantom, where you can pay with your wallet.';
         show(hint, true);
       }
+    } else {
+      show(walletLink, false);
+      if (hint) show(hint, false);
     }
 
     // No wallet detected: explain the real path instead of offering a button

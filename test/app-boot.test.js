@@ -147,7 +147,8 @@ function boot({
     location: {
       pathname,
       search,
-      origin: 'https://paytag.test'
+      origin: 'https://paytag.test',
+      href: 'https://paytag.test' + pathname + search
     },
     window: null
   };
@@ -484,26 +485,47 @@ test('a link with no amount leaves the field empty and hides the request', () =>
   assert.equal(els.requestedAmount.classes.has('hidden'), true);
 });
 
-test('a wallet-native solana: link is offered when the address is valid', () => {
+test('the dead wallet link is NOT offered on desktop', () => {
+  // The Phantom browser extension registers no protocol handler, so a
+  // solana:/phantom: link does nothing in Chrome. Shipping a button that
+  // silently does nothing is worse than shipping no button.
   const { els } = boot({
-    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=2.5'
+    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=2.5',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
   });
-  assert.equal(els.openWalletLink.classes.has('hidden'), false,
-    'the one-tap wallet path should be offered');
-  assert.ok(els.openWalletLink.href.startsWith('solana:' + VALID_ADDRESS),
-    els.openWalletLink.href);
-  assert.match(els.openWalletLink.href, /amount=2\.5/);
+  assert.equal(els.openWalletLink.classes.has('hidden'), true,
+    'a desktop deep link cannot work and must not be shown');
+  assert.equal(els.walletHint.classes.has('hidden'), true);
 });
 
-test('the solana: link carries the CLUSTER-SPECIFIC USDC mint', () => {
+test('a phone gets a real Phantom universal link, not a bare scheme', () => {
+  // Universal links are https:// URLs, so a mobile browser can actually hand
+  // them to the app. A solana: scheme cannot be resolved by a mobile browser.
+  const { els } = boot({
+    search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=2.5',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Safari/605.1'
+  });
+  assert.equal(els.openWalletLink.classes.has('hidden'), false,
+    'the deep link should be offered on a phone');
+  assert.ok(els.openWalletLink.href.startsWith('https://phantom.com/ul/browse/'),
+    'must be the documented browse deeplink, got: ' + els.openWalletLink.href);
+  assert.doesNotMatch(els.openWalletLink.href, /^solana:/,
+    'a bare scheme cannot be resolved by a mobile browser');
+  // It must point back at THIS page, so the payer lands in the flow that works.
+  assert.match(els.openWalletLink.href, /paytag\.test/,
+    'the deeplink must carry this page URL');
+  assert.match(els.openWalletLink.href, /ref=/,
+    'the deeplink requires a ref parameter');
+});
+
+test('a USDC link labels the request and the send button in USDC', () => {
   const { els } = boot({
     search: '?tag=alice&to=' + VALID_ADDRESS + '&amount=12.5&token=USDC'
   });
-  // A mainnet mint on devnet would name a token that does not exist there.
-  assert.match(els.openWalletLink.href, /spl-token=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU/,
-    els.openWalletLink.href);
   assert.equal(els.requestedTokenLabel.textContent, 'USDC');
   assert.match(els.sendButton.textContent, /USDC/);
+  assert.equal(els.customAmount.value, '12.5',
+    'the requested USDC amount should be prefilled');
 });
 
 test('a no-wallet visitor is told how to pay, and cannot be misled', () => {

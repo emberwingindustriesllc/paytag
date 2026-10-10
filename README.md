@@ -139,13 +139,23 @@ real logic be unit tested while the app still ships with no build step.
 
 On a phone, no browser injects a Solana wallet — not Safari, not Chrome. The
 wallet lives in the **Phantom app**, so a PayTag link has to be opened *inside*
-Phantom's built-in browser or nothing will happen when you tap "Connect Wallet
+Phantom's in-app browser or nothing will happen when you tap "Connect Wallet
 to Pay".
 
-- **iOS/Android:** tap the ⋯ / share menu → **Open in Phantom**, or copy the link
-  and paste it into the browser inside the Phantom app.
-- PayTag detects a phone and says this explicitly instead of telling you to
-  "install the Phantom extension", which is the wrong advice there.
+PayTag handles this: on a phone it shows an **Open in Phantom** button built
+from Phantom's documented [`browse`
+deeplink](https://docs.phantom.com/phantom-deeplinks/other-methods/browse),
+which reopens the same page inside Phantom where the wallet *is* injected.
+
+- **iOS/Android:** tap **Open in Phantom**, or use the ⋯ / share menu → **Open
+  in Phantom**, or paste the link into the browser inside the Phantom app.
+- **Desktop:** this button is deliberately **not shown**. The wallet is already
+  injected into the page, so there is nothing to hand off — and a
+  `solana:`/`phantom:` scheme link silently does nothing in Chrome, because the
+  extension registers no protocol handler. A button that does nothing is worse
+  than no button.
+- Phantom exposes **no transfer deeplink**, so a pre-filled payment cannot be
+  handed to the app; the wallet must be driven from a page it is injected into.
 - Balances on a test cluster only appear in Phantom when **Testnet Mode** is on
   and the matching network (Devnet) is selected. A payment can land correctly
   and still be invisible if the wallet is showing a different cluster — always
